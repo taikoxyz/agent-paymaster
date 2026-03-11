@@ -1,11 +1,91 @@
 import { createHash } from "node:crypto";
 
+import { encodeAbiParameters, keccak256 } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+
 import type { BundlerClient } from "./bundler-client.js";
 import { type JsonRpcRequest, isJsonRpcFailure, isObject } from "./types.js";
 
 const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
 const HEX_QUANTITY_PATTERN = /^0x[0-9a-fA-F]+$/;
+const HEX_BYTES_PATTERN = /^0x(?:[0-9a-fA-F]{2})*$/;
 const WEI_PER_ETH = 10n ** 18n;
+const ZERO_BYTES32 = `0x${"0".repeat(64)}` as const;
+const QUOTE_ID_LENGTH = 24;
+const PAYMASTER_DATA_PARAMETERS = [
+  {
+    type: "tuple",
+    name: "quote",
+    components: [
+      { name: "sender", type: "address" },
+      { name: "token", type: "address" },
+      { name: "entryPoint", type: "address" },
+      { name: "chainId", type: "uint256" },
+      { name: "maxTokenCost", type: "uint256" },
+      { name: "validAfter", type: "uint48" },
+      { name: "validUntil", type: "uint48" },
+      { name: "nonce", type: "uint256" },
+      { name: "callDataHash", type: "bytes32" },
+    ],
+  },
+  {
+    type: "bytes",
+    name: "quoteSignature",
+  },
+  {
+    type: "tuple",
+    name: "permit",
+    components: [
+      { name: "value", type: "uint256" },
+      { name: "deadline", type: "uint256" },
+      { name: "v", type: "uint8" },
+      { name: "r", type: "bytes32" },
+      { name: "s", type: "bytes32" },
+    ],
+  },
+] as const;
+
+const QUOTE_TYPES = {
+  QuoteData: [
+    { name: "sender", type: "address" },
+    { name: "token", type: "address" },
+    { name: "entryPoint", type: "address" },
+    { name: "chainId", type: "uint256" },
+    { name: "maxTokenCost", type: "uint256" },
+    { name: "validAfter", type: "uint48" },
+    { name: "validUntil", type: "uint48" },
+    { name: "nonce", type: "uint256" },
+    { name: "callDataHash", type: "bytes32" },
+  ],
+} as const;
+
+interface QuoteData {
+  sender: `0x${string}`;
+  token: `0x${string}`;
+  entryPoint: `0x${string}`;
+  chainId: bigint;
+  maxTokenCost: bigint;
+  validAfter: number;
+  validUntil: number;
+  nonce: bigint;
+  callDataHash: `0x${string}`;
+}
+
+interface PermitData {
+  value: bigint;
+  deadline: bigint;
+  v: number;
+  r: `0x${string}`;
+  s: `0x${string}`;
+}
+
+const EMPTY_PERMIT: PermitData = {
+  value: 0n,
+  deadline: 0n,
+  v: 0,
+  r: ZERO_BYTES32,
+  s: ZERO_BYTES32,
+};
 
 export type ChainName = "taikoMainnet" | "taikoHekla" | "taikoHoodi";
 
@@ -39,6 +119,8 @@ interface ParsedQuoteInput {
   chain: ChainConfig;
   token: "USDC";
   userOperation: Record<string, unknown>;
+  userOperationNonce: bigint;
+  callData: `0x${string}`;
 }
 
 export interface PaymasterQuote {
@@ -66,6 +148,7 @@ export interface PaymasterServiceConfig {
   quoteTtlSeconds: number;
   usdcPerEthMicros: bigint;
   surchargeBps: number;
+  quoteSignerPrivateKey: `0x${string}`;
   defaultPaymasterVerificationGasLimit: bigint;
   defaultPaymasterPostOpGasLimit: bigint;
   tokenAddresses: Record<ChainName, string>;
@@ -81,8 +164,9 @@ export type PaymasterServiceConfigInput = Omit<
 export const DEFAULT_PAYMASTER_CONFIG: PaymasterServiceConfig = {
   paymasterAddress: "0x9999999999999999999999999999999999999999",
   quoteTtlSeconds: 90,
-  usdcPerEthMicros: 3_000_000_000n,
+  usdcPerEthMicros: 0n,
   surchargeBps: 500,
+  quoteSignerPrivateKey: `0x${"1".repeat(64)}`,
   defaultPaymasterVerificationGasLimit: 60_000n,
   defaultPaymasterPostOpGasLimit: 45_000n,
   tokenAddresses: {
@@ -106,6 +190,22 @@ const parseHexQuantity = (value: unknown, fieldName: string): bigint => {
   }
 
   return BigInt(value);
+};
+
+const parseOptionalHexQuantity = (value: unknown, fieldName: string): bigint | null => {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  return parseHexQuantity(value, fieldName);
+};
+
+const parseBytes = (value: unknown, fieldName: string): `0x${string}` => {
+  if (typeof value !== "string" || !HEX_BYTES_PATTERN.test(value)) {
+    throw new Error(`${fieldName} must be a hex bytes value`);
+  }
+
+  return value.toLowerCase() as `0x${string}`;
 };
 
 const toHexQuantity = (value: bigint): `0x${string}` => {
@@ -162,23 +262,33 @@ const resolveChain = (chainInput: unknown, chainIdInput: unknown): ChainConfig =
   throw new Error("Unsupported chain. Supported values: taikoMainnet, taikoHekla, taikoHoodi");
 };
 
-const parseGasEstimate = (value: unknown): GasEstimate => {
+const parseGasEstimate = (
+  value: unknown,
+  defaults: {
+    paymasterVerificationGasLimit: bigint;
+    paymasterPostOpGasLimit: bigint;
+  },
+): GasEstimate => {
   if (!isObject(value)) {
     throw new Error("Bundler gas estimate is invalid");
   }
+
+  const paymasterVerificationGasLimit = parseOptionalHexQuantity(
+    value.paymasterVerificationGasLimit,
+    "paymasterVerificationGasLimit",
+  );
+  const paymasterPostOpGasLimit = parseOptionalHexQuantity(
+    value.paymasterPostOpGasLimit,
+    "paymasterPostOpGasLimit",
+  );
 
   return {
     callGasLimit: parseHexQuantity(value.callGasLimit, "callGasLimit"),
     verificationGasLimit: parseHexQuantity(value.verificationGasLimit, "verificationGasLimit"),
     preVerificationGas: parseHexQuantity(value.preVerificationGas, "preVerificationGas"),
-    paymasterVerificationGasLimit: parseHexQuantity(
-      value.paymasterVerificationGasLimit,
-      "paymasterVerificationGasLimit",
-    ),
-    paymasterPostOpGasLimit: parseHexQuantity(
-      value.paymasterPostOpGasLimit,
-      "paymasterPostOpGasLimit",
-    ),
+    paymasterVerificationGasLimit:
+      paymasterVerificationGasLimit ?? defaults.paymasterVerificationGasLimit,
+    paymasterPostOpGasLimit: paymasterPostOpGasLimit ?? defaults.paymasterPostOpGasLimit,
   };
 };
 
@@ -201,6 +311,8 @@ const parseQuoteInput = (input: unknown): ParsedQuoteInput => {
   }
 
   const chain = resolveChain(input.chain, input.chainId);
+  const userOperationNonce = parseHexQuantity(userOperationRaw.nonce, "userOperation.nonce");
+  const callData = parseBytes(userOperationRaw.callData, "userOperation.callData");
 
   return {
     sender,
@@ -208,6 +320,8 @@ const parseQuoteInput = (input: unknown): ParsedQuoteInput => {
     chain,
     token: "USDC",
     userOperation: userOperationRaw,
+    userOperationNonce,
+    callData,
   };
 };
 
@@ -215,6 +329,7 @@ export class PaymasterService {
   private readonly bundlerClient: BundlerClient;
   private readonly config: PaymasterServiceConfig;
   private readonly nowMs: () => number;
+  private readonly quoteSigner: ReturnType<typeof privateKeyToAccount>;
 
   constructor(
     bundlerClient: BundlerClient,
@@ -240,12 +355,22 @@ export class PaymasterService {
       merged.tokenAddresses.taikoHekla ?? DEFAULT_PAYMASTER_CONFIG.tokenAddresses.taikoHekla;
     const tokenAddressHoodi =
       merged.tokenAddresses.taikoHoodi ?? DEFAULT_PAYMASTER_CONFIG.tokenAddresses.taikoHoodi;
+    const quoteSignerPrivateKey =
+      merged.quoteSignerPrivateKey ?? DEFAULT_PAYMASTER_CONFIG.quoteSignerPrivateKey;
+
+    if (
+      typeof quoteSignerPrivateKey !== "string" ||
+      !/^0x[a-fA-F0-9]{64}$/u.test(quoteSignerPrivateKey)
+    ) {
+      throw new Error("quoteSignerPrivateKey must be a 32-byte hex private key");
+    }
 
     this.config = {
       ...merged,
       paymasterAddress: normalizeAddress(paymasterAddress, "paymasterAddress"),
       quoteTtlSeconds: Math.max(15, merged.quoteTtlSeconds),
       surchargeBps: Math.max(0, merged.surchargeBps),
+      quoteSignerPrivateKey,
       defaultPaymasterVerificationGasLimit: merged.defaultPaymasterVerificationGasLimit,
       defaultPaymasterPostOpGasLimit: merged.defaultPaymasterPostOpGasLimit,
       tokenAddresses: {
@@ -258,17 +383,21 @@ export class PaymasterService {
           ? merged.usdcPerEthMicros
           : DEFAULT_PAYMASTER_CONFIG.usdcPerEthMicros,
     };
+
+    if (this.config.usdcPerEthMicros <= 0n) {
+      throw new Error("usdcPerEthMicros must be configured and greater than zero");
+    }
+
+    this.quoteSigner = privateKeyToAccount(this.config.quoteSignerPrivateKey);
   }
 
   getConfigSummary(): Record<string, unknown> {
     return {
       paymasterAddress: this.config.paymasterAddress,
       quoteTtlSeconds: this.config.quoteTtlSeconds,
-      surchargeBps: this.config.surchargeBps,
-      usdcPerEth: formatUsdcMicros(this.config.usdcPerEthMicros),
-      tokenAddresses: this.config.tokenAddresses,
       supportedChains: CHAIN_CONFIGS,
       supportedTokens: ["USDC"],
+      signerAddress: this.quoteSigner.address,
     };
   }
 
@@ -286,7 +415,10 @@ export class PaymasterService {
       throw new Error(`Bundler gas estimate failed: ${gasEstimateResponse.error.message}`);
     }
 
-    const gas = parseGasEstimate(gasEstimateResponse.result);
+    const gas = parseGasEstimate(gasEstimateResponse.result, {
+      paymasterVerificationGasLimit: this.config.defaultPaymasterVerificationGasLimit,
+      paymasterPostOpGasLimit: this.config.defaultPaymasterPostOpGasLimit,
+    });
     const userOpMaxFeePerGas = parseHexQuantity(
       parsed.userOperation.maxFeePerGas,
       "userOperation.maxFeePerGas",
@@ -307,35 +439,47 @@ export class PaymasterService {
       BigInt(10_000);
     const maxTokenCostMicros = grossMicros > 0n ? grossMicros : 1n;
 
-    const validUntil = Math.floor(this.nowMs() / 1000) + this.config.quoteTtlSeconds;
-    const quoteId = createHash("sha256")
-      .update(
-        JSON.stringify({
-          sender: parsed.sender,
-          entryPoint: parsed.entryPoint,
-          chainId: parsed.chain.chainId,
-          validUntil,
-          maxTokenCostMicros: maxTokenCostMicros.toString(),
-        }),
-      )
-      .digest("hex")
-      .slice(0, 24);
+    const tokenAddress = this.config.tokenAddresses[parsed.chain.name];
+    const validAfter = Math.floor(this.nowMs() / 1000);
+    const validUntil = validAfter + this.config.quoteTtlSeconds;
+    const callDataHash = keccak256(parsed.callData);
 
-    const paymasterPayload = {
-      quoteId,
-      sender: parsed.sender,
-      chainId: parsed.chain.chainId,
-      token: parsed.token,
-      maxTokenCostMicros: maxTokenCostMicros.toString(),
+    const quoteData: QuoteData = {
+      sender: parsed.sender as `0x${string}`,
+      token: tokenAddress as `0x${string}`,
+      entryPoint: parsed.entryPoint as `0x${string}`,
+      chainId: BigInt(parsed.chain.chainId),
+      maxTokenCost: maxTokenCostMicros,
+      validAfter,
       validUntil,
+      nonce: parsed.userOperationNonce,
+      callDataHash,
     };
 
-    const paymasterData =
-      `0x${Buffer.from(JSON.stringify(paymasterPayload), "utf8").toString("hex")}` as `0x${string}`;
+    const quoteSignature = await this.quoteSigner.signTypedData({
+      domain: {
+        name: "TaikoUsdcPaymaster",
+        version: "1",
+        chainId: quoteData.chainId,
+        verifyingContract: this.config.paymasterAddress as `0x${string}`,
+      },
+      types: QUOTE_TYPES,
+      primaryType: "QuoteData",
+      message: quoteData,
+    });
+
+    const paymasterData = encodeAbiParameters(PAYMASTER_DATA_PARAMETERS, [
+      quoteData,
+      quoteSignature,
+      EMPTY_PERMIT,
+    ]) as `0x${string}`;
+
+    const quoteId = createHash("sha256")
+      .update(paymasterData.slice(2))
+      .digest("hex")
+      .slice(0, QUOTE_ID_LENGTH);
     const paymasterAndData =
       `${this.config.paymasterAddress}${paymasterData.slice(2)}` as `0x${string}`;
-
-    const tokenAddress = this.config.tokenAddresses[parsed.chain.name];
 
     return {
       quoteId,
