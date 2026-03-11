@@ -30,6 +30,19 @@ Run services locally:
 pnpm dev
 ```
 
+## API gateway endpoints
+
+`@agent-paymaster/api` exposes:
+
+- `POST /rpc`: unified JSON-RPC endpoint (`eth_*` proxied to bundler, `pm_*` handled by paymaster quote service).
+- `POST /v1/paymaster/quote`: returns paymaster data + USDC-denominated max gas cost.
+- `GET /health`: aggregate service health.
+- `GET /status`: runtime dependency/config status.
+- `GET /metrics`: Prometheus metrics.
+- `GET /openapi.json`: OpenAPI document.
+
+Static OpenAPI file: `docs/api-openapi.yaml`.
+
 Run contract tests:
 
 ```bash

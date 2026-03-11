@@ -1,0 +1,94 @@
+openapi: 3.1.0
+info:
+  title: Agent Paymaster API
+  version: 0.1.0
+  description: Unified ERC-4337 bundler and paymaster API with USDC gas quotes.
+servers:
+  - url: http://localhost:3000
+paths:
+  /health:
+    get:
+      summary: Gateway health
+      responses:
+        "200":
+          description: API and dependency health
+  /status:
+    get:
+      summary: Detailed gateway status
+      responses:
+        "200":
+          description: Runtime status and configuration
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      responses:
+        "200":
+          description: Prometheus exposition text
+  /openapi.json:
+    get:
+      summary: OpenAPI JSON document
+      responses:
+        "200":
+          description: API schema as JSON
+  /rpc:
+    post:
+      summary: Unified JSON-RPC endpoint
+      description: Proxies eth_* methods to bundler and serves pm_* methods.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [jsonrpc, id, method]
+              properties:
+                jsonrpc:
+                  type: string
+                  enum: ["2.0"]
+                id:
+                  oneOf:
+                    - type: string
+                    - type: number
+                    - type: "null"
+                method:
+                  type: string
+                params: {}
+      responses:
+        "200":
+          description: JSON-RPC response
+        "400":
+          description: Invalid request
+        "429":
+          description: Rate limited
+  /v1/paymaster/quote:
+    post:
+      summary: Generate USDC paymaster quote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [entryPoint, userOperation]
+              properties:
+                sender:
+                  type: string
+                chain:
+                  type: string
+                  enum: [taikoMainnet, taikoHekla, taikoHoodi]
+                chainId:
+                  type: integer
+                entryPoint:
+                  type: string
+                token:
+                  type: string
+                  enum: [USDC]
+                userOperation:
+                  type: object
+      responses:
+        "200":
+          description: Quote payload including paymasterData and USDC estimate
+        "400":
+          description: Invalid payload or gas estimation failure
+        "429":
+          description: Rate limited
