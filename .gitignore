@@ -3,6 +3,8 @@ dist
 .env
 .env.local
 coverage
+.next
+**/.next
 packages/paymaster-contracts/artifacts
 packages/paymaster-contracts/cache
 packages/paymaster-contracts/typechain-types
