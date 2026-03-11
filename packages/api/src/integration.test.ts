@@ -7,7 +7,7 @@
 import { describe, expect, it, beforeEach } from "vitest";
 
 import { BundlerService } from "@agent-paymaster/bundler";
-import { AgentPaymasterClient, type UserOperation, JsonRpcRequestError } from "@agent-paymaster/sdk";
+import { AgentPaymasterClient, type UserOperation } from "@agent-paymaster/sdk";
 
 import type { BundlerClient } from "./bundler-client.js";
 import { createApp } from "./index.js";
