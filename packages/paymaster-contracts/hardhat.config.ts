@@ -25,9 +25,9 @@ const config: HardhatUserConfig = {
       chainId: 167000,
       accounts,
     },
-    taikoHekla: {
-      url: process.env.TAIKO_HEKLA_RPC_URL ?? "https://rpc.hekla.taiko.xyz",
-      chainId: 167009,
+    taikoHoodi: {
+      url: process.env.TAIKO_HOODI_RPC_URL ?? "https://rpc.hoodi.taiko.xyz",
+      chainId: 167013,
       accounts,
     },
   },

@@ -5,5 +5,5 @@
     "moduleResolution": "Node",
     "types": ["node", "mocha"]
   },
-  "include": ["hardhat.config.ts", "test/**/*.ts"]
+  "include": ["hardhat.config.ts", "scripts/**/*.ts", "test/**/*.ts"]
 }

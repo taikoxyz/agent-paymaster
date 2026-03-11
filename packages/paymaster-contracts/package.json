@@ -4,8 +4,10 @@
   "private": true,
   "scripts": {
     "build": "hardhat compile",
-    "lint": "eslint hardhat.config.ts test --ext .ts",
-    "test": "hardhat test"
+    "lint": "eslint hardhat.config.ts scripts test --ext .ts",
+    "test": "hardhat test",
+    "deploy:taiko-mainnet": "hardhat run scripts/deploy-taiko-mainnet.ts --network taikoMainnet",
+    "deploy:taiko-hoodi": "hardhat run scripts/deploy-taiko-hoodi.ts --network taikoHoodi"
   },
   "devDependencies": {
     "@types/chai": "^4.3.20",

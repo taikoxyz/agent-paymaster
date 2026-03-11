@@ -49,6 +49,13 @@ Run contract tests:
 pnpm --filter @agent-paymaster/paymaster-contracts test
 ```
 
+Deploy paymaster contract:
+
+```bash
+pnpm --filter @agent-paymaster/paymaster-contracts deploy:taiko-mainnet
+pnpm --filter @agent-paymaster/paymaster-contracts deploy:taiko-hoodi
+```
+
 ## Docker
 
 ```bash
@@ -60,4 +67,4 @@ docker compose up --build
 Hardhat is configured for:
 
 - `taikoMainnet`
-- `taikoHekla`
+- `taikoHoodi`
