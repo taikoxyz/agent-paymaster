@@ -6,6 +6,7 @@ Monorepo scaffold for the Taiko-focused ERC-4337 paymaster and bundler stack.
 
 - `@agent-paymaster/api`: Hono API service.
 - `@agent-paymaster/bundler`: bundler worker/service skeleton.
+- `@agent-paymaster/sdk`: TypeScript client for unified RPC + paymaster quote APIs.
 - `@agent-paymaster/shared`: shared types and helpers.
 - `@agent-paymaster/paymaster-contracts`: Hardhat contracts and tests.
 
