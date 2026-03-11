@@ -12,6 +12,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@agent-paymaster/shared": "workspace:*"
+    "@agent-paymaster/shared": "workspace:*",
+    "@hono/node-server": "^1.13.8",
+    "hono": "^4.7.2"
   }
 }

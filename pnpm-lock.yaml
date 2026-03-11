@@ -65,6 +65,12 @@ importers:
       '@agent-paymaster/shared':
         specifier: workspace:*
         version: link:../shared
+      '@hono/node-server':
+        specifier: ^1.13.8
+        version: 1.19.11(hono@4.12.7)
+      hono:
+        specifier: ^4.7.2
+        version: 4.12.7
 
   packages/paymaster-contracts:
     devDependencies:
