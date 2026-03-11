@@ -60,6 +60,7 @@ contract TaikoUsdcPaymaster is IPaymaster {
     }
 
     uint256 private constant _MAX_BPS = 10_000;
+    uint256 private constant _MAX_POST_OP_OVERHEAD_GAS = 1_000_000;
     uint256 private constant _SIG_VALIDATION_FAILED = 1;
     uint256 private constant _NOT_ENTERED = 1;
     uint256 private constant _ENTERED = 2;
@@ -94,7 +95,9 @@ contract TaikoUsdcPaymaster is IPaymaster {
     error InsufficientBalance();
     error InvalidAddress();
     error InvalidBps();
+    error InvalidLimits();
     error TokenTransferFailed();
+    error ReentrancyGuard();
 
     event UserOperationSponsored(
         address indexed token,
@@ -160,6 +163,7 @@ contract TaikoUsdcPaymaster is IPaymaster {
         if (surchargeBps_ > _MAX_BPS) {
             revert InvalidBps();
         }
+        _validateLimits(maxVerificationGasLimit_, postOpOverheadGas_, maxNativeCostWei_, maxQuoteTtlSeconds_);
 
         owner = owner_;
         entryPoint = IEntryPoint(entryPoint_);
@@ -197,7 +201,7 @@ contract TaikoUsdcPaymaster is IPaymaster {
 
     modifier nonReentrant() {
         if (_reentrancyStatus == _ENTERED) {
-            revert TokenTransferFailed();
+            revert ReentrancyGuard();
         }
         _reentrancyStatus = _ENTERED;
         _;
@@ -242,7 +246,7 @@ contract TaikoUsdcPaymaster is IPaymaster {
 
         if (usdc.allowance(userOp.sender, address(this)) < quote.maxTokenCost) {
             if (permitData.value > 0) {
-                IERC20Permit(address(usdc)).permit(
+                try IERC20Permit(address(usdc)).permit(
                     userOp.sender,
                     address(this),
                     permitData.value,
@@ -250,7 +254,7 @@ contract TaikoUsdcPaymaster is IPaymaster {
                     permitData.v,
                     permitData.r,
                     permitData.s
-                );
+                ) {} catch {}
             }
 
             if (usdc.allowance(userOp.sender, address(this)) < quote.maxTokenCost) {
@@ -273,7 +277,7 @@ contract TaikoUsdcPaymaster is IPaymaster {
     }
 
     function postOp(
-        PostOpMode,
+        PostOpMode mode,
         bytes calldata context,
         uint256 actualGasCost,
         uint256 actualUserOpFeePerGas
@@ -286,16 +290,18 @@ contract TaikoUsdcPaymaster is IPaymaster {
         uint256 feeTokenAmount = paymasterContext.prefund;
         uint256 refundAmount;
 
-        if (actualTokenNeeded < paymasterContext.prefund) {
-            refundAmount = paymasterContext.prefund - actualTokenNeeded;
-            feeTokenAmount = actualTokenNeeded;
-            if (refundAmount > 0) {
-                _safeTransfer(address(usdc), paymasterContext.sender, refundAmount);
+        if (mode != PostOpMode.postOpReverted) {
+            if (actualTokenNeeded < paymasterContext.prefund) {
+                refundAmount = paymasterContext.prefund - actualTokenNeeded;
+                feeTokenAmount = actualTokenNeeded;
+                if (refundAmount > 0) {
+                    _safeTransfer(address(usdc), paymasterContext.sender, refundAmount);
+                }
+            } else if (actualTokenNeeded > paymasterContext.prefund && mode == PostOpMode.opSucceeded) {
+                uint256 shortfall = actualTokenNeeded - paymasterContext.prefund;
+                uint256 additionalPulled = _tryPullAdditionalCharge(paymasterContext.sender, shortfall);
+                feeTokenAmount = paymasterContext.prefund + additionalPulled;
             }
-        } else if (actualTokenNeeded > paymasterContext.prefund) {
-            uint256 shortfall = actualTokenNeeded - paymasterContext.prefund;
-            uint256 additionalPulled = _tryPullAdditionalCharge(paymasterContext.sender, shortfall);
-            feeTokenAmount = paymasterContext.prefund + additionalPulled;
         }
 
         emit UserOperationSponsored(
@@ -364,6 +370,8 @@ contract TaikoUsdcPaymaster is IPaymaster {
         uint256 maxNativeCostWei_,
         uint256 maxQuoteTtlSeconds_
     ) external onlyOwner {
+        _validateLimits(maxVerificationGasLimit_, postOpOverheadGas_, maxNativeCostWei_, maxQuoteTtlSeconds_);
+
         maxVerificationGasLimit = maxVerificationGasLimit_;
         postOpOverheadGas = postOpOverheadGas_;
         maxNativeCostWei = maxNativeCostWei_;
@@ -493,6 +501,22 @@ contract TaikoUsdcPaymaster is IPaymaster {
 
     function _packValidationData(bool sigFailed, uint48 validUntil, uint48 validAfter) private pure returns (uint256) {
         return (sigFailed ? _SIG_VALIDATION_FAILED : 0) | (uint256(validUntil) << 160) | (uint256(validAfter) << 208);
+    }
+
+    function _validateLimits(
+        uint256 maxVerificationGasLimit_,
+        uint256 postOpOverheadGas_,
+        uint256 maxNativeCostWei_,
+        uint256 maxQuoteTtlSeconds_
+    ) private pure {
+        if (
+            maxVerificationGasLimit_ == 0 ||
+            postOpOverheadGas_ > _MAX_POST_OP_OVERHEAD_GAS ||
+            maxNativeCostWei_ == 0 ||
+            maxQuoteTtlSeconds_ == 0
+        ) {
+            revert InvalidLimits();
+        }
     }
 
     function _tryPullAdditionalCharge(address from, uint256 requestedAmount) private returns (uint256 pulledAmount) {

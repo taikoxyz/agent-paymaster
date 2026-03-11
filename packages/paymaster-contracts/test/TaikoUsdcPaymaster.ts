@@ -290,6 +290,41 @@ describe("TaikoUsdcPaymaster", () => {
     expect(await usdc.balanceOf(await paymaster.getAddress())).to.equal(maxTokenCost);
   });
 
+  it("falls back to allowance checks when permit validation fails", async () => {
+    const { sender, quoteSigner, entryPoint, usdc, paymaster, chainId } = await deployFixture();
+
+    const maxTokenCost = 2_500_000n;
+    const expiredDeadline = BigInt((await ethers.provider.getBlock("latest"))!.timestamp) - 1n;
+
+    const { userOperation } = await buildUserOperation({
+      sender: sender.address,
+      callData: "0x90ab",
+      entryPoint: await entryPoint.getAddress(),
+      usdc: await usdc.getAddress(),
+      paymaster: await paymaster.getAddress(),
+      chainId,
+      quoteSigner,
+      maxTokenCost,
+      nonce: 22n,
+      permit: {
+        value: maxTokenCost,
+        deadline: expiredDeadline,
+        v: 27,
+        r: ethers.ZeroHash,
+        s: ethers.ZeroHash,
+      },
+    });
+
+    await expect(
+      entryPoint.callValidatePaymaster(
+        await paymaster.getAddress(),
+        userOperation,
+        USER_OP_HASH,
+        ethers.parseEther("0.001"),
+      ),
+    ).to.be.revertedWithCustomError(paymaster, "InsufficientAllowance");
+  });
+
   it("refunds excess USDC in postOp", async () => {
     const { sender, quoteSigner, entryPoint, usdc, paymaster, chainId } = await deployFixture();
 
@@ -335,6 +370,183 @@ describe("TaikoUsdcPaymaster", () => {
       .withArgs(await usdc.getAddress(), sender.address, USER_OP_HASH, 1_000_000n, 400n, 400n, 2_999_600n);
 
     expect(await usdc.balanceOf(await paymaster.getAddress())).to.equal(400n);
+  });
+
+  it("pulls additional USDC when postOp shortfall occurs on successful ops", async () => {
+    const { sender, quoteSigner, entryPoint, usdc, paymaster, chainId } = await deployFixture();
+
+    const maxTokenCost = 1_000_000n;
+
+    await usdc.connect(sender).approve(await paymaster.getAddress(), 5_000_000n);
+
+    const { userOperation } = await buildUserOperation({
+      sender: sender.address,
+      callData: "0x7788",
+      entryPoint: await entryPoint.getAddress(),
+      usdc: await usdc.getAddress(),
+      paymaster: await paymaster.getAddress(),
+      chainId,
+      quoteSigner,
+      maxTokenCost,
+      nonce: 32n,
+    });
+
+    const [context] = await entryPoint.callValidatePaymaster.staticCall(
+      await paymaster.getAddress(),
+      userOperation,
+      USER_OP_HASH,
+      ethers.parseEther("0.001"),
+    );
+
+    await entryPoint.callValidatePaymaster(
+      await paymaster.getAddress(),
+      userOperation,
+      USER_OP_HASH,
+      ethers.parseEther("0.001"),
+    );
+
+    await expect(
+      entryPoint.callPostOp(await paymaster.getAddress(), 0, context, ethers.parseEther("2"), 0),
+    )
+      .to.emit(paymaster, "UserOperationSponsored")
+      .withArgs(await usdc.getAddress(), sender.address, USER_OP_HASH, 1_000_000n, 2_000_000n, 2_000_000n, 0n);
+
+    expect(await usdc.balanceOf(await paymaster.getAddress())).to.equal(2_000_000n);
+  });
+
+  it("caps charges at prefund when user operation reverts", async () => {
+    const { sender, quoteSigner, entryPoint, usdc, paymaster, chainId } = await deployFixture();
+
+    const maxTokenCost = 1_000_000n;
+
+    await usdc.connect(sender).approve(await paymaster.getAddress(), 5_000_000n);
+
+    const { userOperation } = await buildUserOperation({
+      sender: sender.address,
+      callData: "0x8899",
+      entryPoint: await entryPoint.getAddress(),
+      usdc: await usdc.getAddress(),
+      paymaster: await paymaster.getAddress(),
+      chainId,
+      quoteSigner,
+      maxTokenCost,
+      nonce: 33n,
+    });
+
+    const [context] = await entryPoint.callValidatePaymaster.staticCall(
+      await paymaster.getAddress(),
+      userOperation,
+      USER_OP_HASH,
+      ethers.parseEther("0.001"),
+    );
+
+    await entryPoint.callValidatePaymaster(
+      await paymaster.getAddress(),
+      userOperation,
+      USER_OP_HASH,
+      ethers.parseEther("0.001"),
+    );
+
+    await expect(
+      entryPoint.callPostOp(await paymaster.getAddress(), 1, context, ethers.parseEther("2"), 0),
+    )
+      .to.emit(paymaster, "UserOperationSponsored")
+      .withArgs(await usdc.getAddress(), sender.address, USER_OP_HASH, 1_000_000n, 2_000_000n, 1_000_000n, 0n);
+
+    expect(await usdc.balanceOf(await paymaster.getAddress())).to.equal(1_000_000n);
+  });
+
+  it("skips refund and extra pulls when mode is postOpReverted", async () => {
+    const { sender, quoteSigner, entryPoint, usdc, paymaster, chainId } = await deployFixture();
+
+    const maxTokenCost = 3_000_000n;
+
+    await usdc.connect(sender).approve(await paymaster.getAddress(), maxTokenCost);
+
+    const { userOperation } = await buildUserOperation({
+      sender: sender.address,
+      callData: "0x9911",
+      entryPoint: await entryPoint.getAddress(),
+      usdc: await usdc.getAddress(),
+      paymaster: await paymaster.getAddress(),
+      chainId,
+      quoteSigner,
+      maxTokenCost,
+      nonce: 34n,
+    });
+
+    const [context] = await entryPoint.callValidatePaymaster.staticCall(
+      await paymaster.getAddress(),
+      userOperation,
+      USER_OP_HASH,
+      ethers.parseEther("0.001"),
+    );
+
+    await entryPoint.callValidatePaymaster(
+      await paymaster.getAddress(),
+      userOperation,
+      USER_OP_HASH,
+      ethers.parseEther("0.001"),
+    );
+
+    await expect(
+      entryPoint.callPostOp(await paymaster.getAddress(), 2, context, ethers.parseEther("0.0004"), 0),
+    )
+      .to.emit(paymaster, "UserOperationSponsored")
+      .withArgs(await usdc.getAddress(), sender.address, USER_OP_HASH, 1_000_000n, 400n, 3_000_000n, 0n);
+
+    expect(await usdc.balanceOf(await paymaster.getAddress())).to.equal(3_000_000n);
+  });
+
+  it("rejects validate and postOp while paused", async () => {
+    const { owner, sender, quoteSigner, entryPoint, usdc, paymaster, chainId } = await deployFixture();
+
+    await usdc.connect(sender).approve(await paymaster.getAddress(), 3_000_000n);
+
+    const { userOperation } = await buildUserOperation({
+      sender: sender.address,
+      callData: "0xaabb",
+      entryPoint: await entryPoint.getAddress(),
+      usdc: await usdc.getAddress(),
+      paymaster: await paymaster.getAddress(),
+      chainId,
+      quoteSigner,
+      maxTokenCost: 3_000_000n,
+      nonce: 35n,
+    });
+
+    await paymaster.connect(owner).setPaused(true);
+
+    await expect(
+      entryPoint.callValidatePaymaster(
+        await paymaster.getAddress(),
+        userOperation,
+        USER_OP_HASH,
+        ethers.parseEther("0.001"),
+      ),
+    ).to.be.revertedWithCustomError(paymaster, "PaymasterPaused");
+
+    await paymaster.connect(owner).setPaused(false);
+
+    const [context] = await entryPoint.callValidatePaymaster.staticCall(
+      await paymaster.getAddress(),
+      userOperation,
+      USER_OP_HASH,
+      ethers.parseEther("0.001"),
+    );
+
+    await entryPoint.callValidatePaymaster(
+      await paymaster.getAddress(),
+      userOperation,
+      USER_OP_HASH,
+      ethers.parseEther("0.001"),
+    );
+
+    await paymaster.connect(owner).setPaused(true);
+
+    await expect(
+      entryPoint.callPostOp(await paymaster.getAddress(), 0, context, ethers.parseEther("0.0004"), 0),
+    ).to.be.revertedWithCustomError(paymaster, "PaymasterPaused");
   });
 
   it("enforces anti-griefing gas bounds", async () => {
@@ -387,5 +599,59 @@ describe("TaikoUsdcPaymaster", () => {
     await paymaster.connect(owner).withdrawStake(receiver.address);
 
     expect(await entryPoint.stakes(await paymaster.getAddress())).to.equal(0n);
+  });
+
+  it("enforces owner controls and limits validation on admin methods", async () => {
+    const { owner, other, receiver, usdc, paymaster } = await deployFixture();
+
+    await expect(paymaster.connect(other).transferOwnership(other.address)).to.be.revertedWithCustomError(
+      paymaster,
+      "NotOwner",
+    );
+
+    await expect(paymaster.connect(owner).transferOwnership(ethers.ZeroAddress)).to.be.revertedWithCustomError(
+      paymaster,
+      "InvalidAddress",
+    );
+
+    await paymaster.connect(owner).transferOwnership(other.address);
+    expect(await paymaster.owner()).to.equal(other.address);
+
+    await expect(paymaster.connect(owner).setSurchargeBps(100)).to.be.revertedWithCustomError(paymaster, "NotOwner");
+    await expect(paymaster.connect(other).setSurchargeBps(10_001)).to.be.revertedWithCustomError(
+      paymaster,
+      "InvalidBps",
+    );
+    await paymaster.connect(other).setSurchargeBps(100);
+    expect(await paymaster.surchargeBps()).to.equal(100n);
+
+    await usdc.mint(await paymaster.getAddress(), 50_000n);
+
+    await expect(
+      paymaster.connect(owner).withdrawToken(await usdc.getAddress(), receiver.address, 1n),
+    ).to.be.revertedWithCustomError(paymaster, "NotOwner");
+
+    const receiverBefore = await usdc.balanceOf(receiver.address);
+    await paymaster.connect(other).withdrawToken(await usdc.getAddress(), receiver.address, 50_000n);
+    expect(await usdc.balanceOf(receiver.address)).to.equal(receiverBefore + 50_000n);
+
+    await expect(paymaster.connect(other).setLimits(0, 0, 1n, 1n)).to.be.revertedWithCustomError(
+      paymaster,
+      "InvalidLimits",
+    );
+    await expect(paymaster.connect(other).setLimits(200_000n, 1_000_001n, 1n, 1n)).to.be.revertedWithCustomError(
+      paymaster,
+      "InvalidLimits",
+    );
+    await expect(paymaster.connect(other).setLimits(200_000n, 0, 1n, 0)).to.be.revertedWithCustomError(
+      paymaster,
+      "InvalidLimits",
+    );
+
+    await paymaster.connect(other).setLimits(250_000n, 50_000n, ethers.parseEther("1"), 300n);
+    expect(await paymaster.maxVerificationGasLimit()).to.equal(250_000n);
+    expect(await paymaster.postOpOverheadGas()).to.equal(50_000n);
+    expect(await paymaster.maxNativeCostWei()).to.equal(ethers.parseEther("1"));
+    expect(await paymaster.maxQuoteTtlSeconds()).to.equal(300n);
   });
 });
