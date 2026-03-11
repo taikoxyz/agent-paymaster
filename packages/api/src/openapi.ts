@@ -66,10 +66,7 @@ export const openApiDocument = {
         },
         responses: {
           "200": {
-            description: "JSON-RPC success response",
-          },
-          "400": {
-            description: "JSON-RPC error response",
+            description: "JSON-RPC response (success or error payload)",
           },
         },
       },

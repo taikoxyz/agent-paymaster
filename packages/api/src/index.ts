@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 import { buildHealth } from "@agent-paymaster/shared";
 import { Hono } from "hono";
@@ -107,8 +107,11 @@ const resolveConfig = (environment: NodeJS.ProcessEnv = process.env): ApiConfig 
     paymaster: {
       paymasterAddress: parseOptionalAddress(environment.PAYMASTER_ADDRESS),
       quoteTtlSeconds: parseIntWithFallback(environment.PAYMASTER_QUOTE_TTL_SECONDS, 90),
-      usdcPerEthMicros: parseBigIntWithFallback(environment.USDC_PER_ETH_MICROS, 3_000_000_000n),
+      usdcPerEthMicros: parseBigIntWithFallback(environment.USDC_PER_ETH_MICROS, 0n),
       surchargeBps: parseIntWithFallback(environment.PAYMASTER_SURCHARGE_BPS, 500),
+      quoteSignerPrivateKey:
+        (environment.PAYMASTER_QUOTE_SIGNER_PRIVATE_KEY as `0x${string}` | undefined) ??
+        (`0x${randomBytes(32).toString("hex")}` as `0x${string}`),
       tokenAddresses,
     },
   };
@@ -128,7 +131,7 @@ const getClientIdentifier = (headerValue: string | undefined): string | null => 
 };
 
 const normalizeSender = (value: unknown): string | null =>
-  typeof value === "string" && value.startsWith("0x") ? value.toLowerCase() : null;
+  typeof value === "string" && ADDRESS_PATTERN.test(value) ? value.toLowerCase() : null;
 
 const senderFromRpcPayload = (payload: unknown): string | null => {
   if (!isJsonRpcRequest(payload) || !Array.isArray(payload.params) || payload.params.length === 0) {
@@ -327,7 +330,7 @@ export const createApp = (options: CreateAppOptions = {}): Hono => {
     } catch {
       const response = makeJsonRpcError(null, RPC_PARSE_ERROR, "Parse error");
       metrics.recordRpc("<parse>", "error");
-      return c.json(response, 400);
+      return c.json(response, 200);
     }
 
     if (!isJsonRpcRequest(payload)) {
@@ -338,7 +341,7 @@ export const createApp = (options: CreateAppOptions = {}): Hono => {
           : null;
       const response = makeJsonRpcError(invalidId, RPC_INVALID_REQUEST, "Invalid Request");
       metrics.recordRpc("<invalid>", "error");
-      return c.json(response, 400);
+      return c.json(response, 200);
     }
 
     const sender = senderFromRpcPayload(payload);
@@ -358,7 +361,7 @@ export const createApp = (options: CreateAppOptions = {}): Hono => {
       metrics.recordRateLimit("/rpc");
       metrics.recordRpc(payload.method, "error");
 
-      const result = c.json(response, 429);
+      const result = c.json(response, 200);
       applyRateLimitHeaders(result, rateLimitResult);
       return result;
     }
@@ -377,20 +380,23 @@ export const createApp = (options: CreateAppOptions = {}): Hono => {
         rpcResponse = await bundlerClient.rpc(payload);
       }
     } catch (error) {
+      logEvent("error", "rpc.handler_failure", {
+        method: payload.method,
+        error: error instanceof Error ? error.message : "rpc_handler_failure",
+      });
       const response = makeJsonRpcError(payload.id, RPC_INTERNAL_ERROR, "Internal error", {
-        reason: error instanceof Error ? error.message : "rpc_handler_failure",
+        reason: "rpc_handler_failure",
       });
 
       metrics.recordRpc(payload.method, "error");
-      const result = c.json(response, 500);
+      const result = c.json(response, 200);
       applyRateLimitHeaders(result, rateLimitResult);
       return result;
     }
 
-    const statusCode = isJsonRpcFailure(rpcResponse) ? 400 : 200;
     metrics.recordRpc(payload.method, isJsonRpcFailure(rpcResponse) ? "error" : "ok");
 
-    const result = c.json(rpcResponse, statusCode);
+    const result = c.json(rpcResponse, 200);
     applyRateLimitHeaders(result, rateLimitResult);
     return result;
   });
@@ -449,13 +455,16 @@ export const createApp = (options: CreateAppOptions = {}): Hono => {
       applyRateLimitHeaders(result, rateLimitResult);
       return result;
     } catch (error) {
+      logEvent("error", "quote.generation_failed", {
+        error: error instanceof Error ? error.message : "quote_generation_failed",
+      });
       metrics.recordQuote("unknown", "error");
 
       const result = c.json(
         {
           error: {
             code: "quote_generation_failed",
-            message: error instanceof Error ? error.message : "Unable to generate quote",
+            message: "Unable to generate quote",
           },
         },
         400,
