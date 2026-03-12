@@ -62,6 +62,20 @@ describe("user operation builder", () => {
         paymasterPostOpGasLimit: "0xafc8",
       })
       .withPaymasterQuote({
+        callGasLimit: "0x88d8",
+        verificationGasLimit: "0x1d4c8",
+        preVerificationGas: "0x5274",
+        paymasterVerificationGasLimit: "0xea60",
+        paymasterPostOpGasLimit: "0xafc8",
+        quoteId: "abc123",
+        token: "USDC",
+        tokenAddress: "0x9999999999999999999999999999999999999999",
+        maxTokenCost: "0.000100",
+        maxTokenCostMicros: "100",
+        validUntil: 1_900_000_000,
+        isStub: false,
+        paymaster: "0x9999999999999999999999999999999999999999",
+        paymasterData: "0x00",
         paymasterAndData: "0x999999999999999999999999999999999999999900",
       });
 

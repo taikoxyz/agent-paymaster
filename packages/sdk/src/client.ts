@@ -137,6 +137,9 @@ const isQuoteResponse = (value: unknown): value is QuoteResponse => {
     isAddress(value.paymaster) &&
     isHexString(value.paymasterData) &&
     isHexString(value.paymasterAndData) &&
+    isHexString(value.callGasLimit) &&
+    isHexString(value.verificationGasLimit) &&
+    isHexString(value.preVerificationGas) &&
     isHexString(value.paymasterVerificationGasLimit) &&
     isHexString(value.paymasterPostOpGasLimit) &&
     isHexString(value.estimatedGasLimit) &&

@@ -28,6 +28,8 @@ export interface UserOperation {
   callGasLimit?: HexString;
   verificationGasLimit?: HexString;
   preVerificationGas?: HexString;
+  paymasterVerificationGasLimit?: HexString;
+  paymasterPostOpGasLimit?: HexString;
   maxFeePerGas: HexString;
   maxPriorityFeePerGas: HexString;
   paymasterAndData?: HexString;
@@ -905,11 +907,35 @@ export class BundlerService {
       );
     }
 
+    if (userOperationInput.paymasterVerificationGasLimit !== undefined) {
+      userOperation.paymasterVerificationGasLimit = parseHexField(
+        userOperationInput.paymasterVerificationGasLimit,
+        "paymasterVerificationGasLimit",
+      );
+    }
+
+    if (userOperationInput.paymasterPostOpGasLimit !== undefined) {
+      userOperation.paymasterPostOpGasLimit = parseHexField(
+        userOperationInput.paymasterPostOpGasLimit,
+        "paymasterPostOpGasLimit",
+      );
+    }
+
     if (userOperationInput.paymasterAndData !== undefined) {
       userOperation.paymasterAndData = parseHexField(
         userOperationInput.paymasterAndData,
         "paymasterAndData",
       );
+
+      if (userOperation.paymasterAndData !== "0x" && userOperation.paymasterAndData.length < 42) {
+        throw new BundlerRpcError(
+          RPC_INVALID_PARAMS,
+          "paymasterAndData must include a paymaster address prefix",
+          {
+            reason: "paymaster_data_too_short",
+          },
+        );
+      }
     }
 
     if (userOperationInput.l1DataGas !== undefined) {
@@ -1015,6 +1041,44 @@ export class BundlerService {
       toHex(maxFeePerGas, { size: 16 }),
     ]);
 
+    let packedPaymasterAndDataHash = keccak256("0x");
+    if (userOperation.paymasterAndData !== undefined && userOperation.paymasterAndData !== "0x") {
+      if (
+        userOperation.paymasterVerificationGasLimit === undefined ||
+        userOperation.paymasterPostOpGasLimit === undefined
+      ) {
+        throw new BundlerRpcError(
+          RPC_INVALID_PARAMS,
+          "paymaster gas limits are required when paymasterAndData is provided",
+          {
+            reason: "paymaster_gas_missing",
+          },
+        );
+      }
+
+      const paymasterAddress = `0x${userOperation.paymasterAndData.slice(2, 42)}` as HexString;
+      const paymasterData = `0x${userOperation.paymasterAndData.slice(42)}` as HexString;
+      const packedPaymasterAndData = concatHex([
+        paymasterAddress,
+        toHex(
+          toUint128(
+            hexToBigInt(userOperation.paymasterVerificationGasLimit),
+            "paymasterVerificationGasLimit",
+          ),
+          { size: 16 },
+        ),
+        toHex(
+          toUint128(
+            hexToBigInt(userOperation.paymasterPostOpGasLimit),
+            "paymasterPostOpGasLimit",
+          ),
+          { size: 16 },
+        ),
+        paymasterData,
+      ]);
+      packedPaymasterAndDataHash = keccak256(packedPaymasterAndData);
+    }
+
     const packedUserOp = encodeAbiParameters(
       [
         { type: "address" },
@@ -1036,7 +1100,7 @@ export class BundlerService {
           ? 0n
           : hexToBigInt(userOperation.preVerificationGas),
         gasFees,
-        keccak256(userOperation.paymasterAndData ?? "0x"),
+        packedPaymasterAndDataHash,
       ],
     );
 

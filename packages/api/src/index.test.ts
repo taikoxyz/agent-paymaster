@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { BundlerClient } from "./bundler-client.js";
 import { createApp, validateConfig } from "./index.js";
-import type { PaymasterQuote } from "./paymaster-service.js";
+import { StaticPriceProvider, type PaymasterQuote } from "./paymaster-service.js";
 import { FixedWindowRateLimiter } from "./rate-limit.js";
 import type { JsonRpcRequest, JsonRpcResponse } from "./types.js";
 
@@ -111,7 +111,7 @@ const createTestApp = (
     rateLimiter: options.rateLimiter,
     config: {
       paymaster: {
-        usdcPerEthMicros: 3_000_000_000n,
+        priceProvider: new StaticPriceProvider(3_000_000_000n),
         quoteSignerPrivateKey: TEST_QUOTE_SIGNER_PRIVATE_KEY,
         paymasterAddress: TEST_PAYMASTER_ADDRESS,
         tokenAddresses: {
@@ -401,7 +401,7 @@ describe("api gateway", () => {
       }),
       config: {
         paymaster: {
-          usdcPerEthMicros: 3_000_000_000n,
+          priceProvider: new StaticPriceProvider(3_000_000_000n),
           quoteSignerPrivateKey: TEST_QUOTE_SIGNER_PRIVATE_KEY,
           paymasterAddress: TEST_PAYMASTER_ADDRESS,
           tokenAddresses: {
@@ -442,7 +442,7 @@ describe("api gateway", () => {
       }),
       config: {
         paymaster: {
-          usdcPerEthMicros: 3_000_000_000n,
+          priceProvider: new StaticPriceProvider(3_000_000_000n),
           quoteSignerPrivateKey: TEST_QUOTE_SIGNER_PRIVATE_KEY,
           paymasterAddress: TEST_PAYMASTER_ADDRESS,
           tokenAddresses: {
@@ -474,7 +474,7 @@ describe("api gateway", () => {
       bundlerClient,
       config: {
         paymaster: {
-          usdcPerEthMicros: 3_000_000_000n,
+          priceProvider: new StaticPriceProvider(3_000_000_000n),
           quoteSignerPrivateKey: TEST_QUOTE_SIGNER_PRIVATE_KEY,
           paymasterAddress: TEST_PAYMASTER_ADDRESS,
           tokenAddresses: {
@@ -507,7 +507,7 @@ describe("api gateway", () => {
       validateConfig({
         PAYMASTER_QUOTE_SIGNER_PRIVATE_KEY: TEST_QUOTE_SIGNER_PRIVATE_KEY,
         PAYMASTER_ADDRESS: TEST_PAYMASTER_ADDRESS,
-        USDC_PER_ETH_MICROS: "3000000000",
+        PAYMASTER_STATIC_USDC_PER_ETH_MICROS: "3000000000",
         USDC_MAINNET_ADDRESS: TEST_TOKEN_ADDRESS,
       } as NodeJS.ProcessEnv),
     ).not.toThrow();
@@ -518,7 +518,7 @@ describe("api gateway", () => {
       validateConfig({
         PAYMASTER_QUOTE_SIGNER_PRIVATE_KEY: TEST_QUOTE_SIGNER_PRIVATE_KEY,
         PAYMASTER_ADDRESS: TEST_PAYMASTER_ADDRESS,
-        USDC_PER_ETH_MICROS: "3000000000",
+        PAYMASTER_STATIC_USDC_PER_ETH_MICROS: "3000000000",
       } as NodeJS.ProcessEnv),
     ).toThrow("At least one USDC_*_ADDRESS must be configured");
   });

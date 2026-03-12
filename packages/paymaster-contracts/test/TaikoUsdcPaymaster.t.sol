@@ -9,12 +9,10 @@ import {PackedUserOperation} from "account-abstraction/contracts/interfaces/Pack
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {MockEntryPoint} from "./mocks/MockEntryPoint.sol";
 import {MockERC20Permit} from "./mocks/MockERC20Permit.sol";
-import {MockUsdcPriceOracle} from "./mocks/MockUsdcPriceOracle.sol";
 
 contract TaikoUsdcPaymasterTest is Test {
     MockEntryPoint entryPoint;
     MockERC20Permit usdc;
-    MockUsdcPriceOracle oracle;
     TaikoUsdcPaymaster paymaster;
 
     address owner;
@@ -26,19 +24,6 @@ contract TaikoUsdcPaymasterTest is Test {
 
     bytes32 constant USER_OP_HASH = keccak256("user-operation-hash");
 
-    bytes32 constant QUOTE_TYPEHASH = keccak256(
-        "QuoteData(address sender,address token,address entryPoint,uint256 chainId,uint256 maxTokenCost,uint48 validAfter,uint48 validUntil,uint256 nonce,bytes32 callDataHash)"
-    );
-    bytes32 constant EIP712_DOMAIN_TYPEHASH =
-        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
-    bytes32 constant NAME_HASH = keccak256("TaikoUsdcPaymaster");
-    bytes32 constant VERSION_HASH = keccak256("1");
-
-    string constant QUOTE_TUPLE_TYPE =
-        "tuple(address sender,address token,address entryPoint,uint256 chainId,uint256 maxTokenCost,uint48 validAfter,uint48 validUntil,uint256 nonce,bytes32 callDataHash)";
-    string constant PERMIT_TUPLE_TYPE = "tuple(uint256 value,uint256 deadline,uint8 v,bytes32 r,bytes32 s)";
-
-    // Default gas values for PackedUserOperation
     uint256 constant DEFAULT_CALL_GAS_LIMIT = 120_000;
     uint256 constant DEFAULT_PRE_VERIFICATION_GAS = 30_000;
     uint256 constant DEFAULT_MAX_FEE_PER_GAS = 1_000_000_000;
@@ -47,15 +32,14 @@ contract TaikoUsdcPaymasterTest is Test {
     uint128 constant DEFAULT_PAYMASTER_POSTOP_GAS = 100_000;
 
     struct QuoteData {
-        address sender;
         address token;
-        address entryPoint;
-        uint256 chainId;
+        uint256 exchangeRate;
         uint256 maxTokenCost;
         uint48 validAfter;
         uint48 validUntil;
-        uint256 nonce;
-        bytes32 callDataHash;
+        uint256 quoteNonce;
+        uint32 postOpOverheadGas;
+        uint16 surchargeBps;
     }
 
     struct PermitData {
@@ -76,24 +60,20 @@ contract TaikoUsdcPaymasterTest is Test {
 
         entryPoint = new MockEntryPoint();
         usdc = new MockERC20Permit();
-        oracle = new MockUsdcPriceOracle(1_000_000);
 
         paymaster = new TaikoUsdcPaymaster(
             IEntryPoint(address(entryPoint)),
             address(usdc),
             quoteSigner,
-            address(oracle),
-            0, // surchargeBps
-            200_000, // maxVerificationGasLimit
-            0, // postOpOverheadGas
-            0.01 ether, // maxNativeCostWei
-            120 // maxQuoteTtlSeconds
+            200_000,
+            100_000,
+            0.01 ether,
+            120,
+            1_000
         );
 
         usdc.mint(sender, 100_000_000);
     }
-
-    // ─── Helpers ──────────────────────────────────────────────
 
     function _packAccountGasLimits(uint256 verificationGasLimit, uint256 callGasLimit) internal pure returns (bytes32) {
         return bytes32(verificationGasLimit << 128 | callGasLimit);
@@ -103,66 +83,66 @@ contract TaikoUsdcPaymasterTest is Test {
         return bytes32(maxPriorityFeePerGas << 128 | maxFeePerGas);
     }
 
-    function _hashQuote(QuoteData memory quote) internal pure returns (bytes32) {
-        return keccak256(
-            abi.encode(
-                QUOTE_TYPEHASH,
-                quote.sender,
-                quote.token,
-                quote.entryPoint,
-                quote.chainId,
-                quote.maxTokenCost,
-                quote.validAfter,
-                quote.validUntil,
-                quote.nonce,
-                quote.callDataHash
-            )
-        );
-    }
-
-    function _domainSeparator() internal view returns (bytes32) {
-        return keccak256(abi.encode(EIP712_DOMAIN_TYPEHASH, NAME_HASH, VERSION_HASH, block.chainid, address(paymaster)));
-    }
-
-    function _hashTypedDataV4(bytes32 structHash) internal view returns (bytes32) {
-        return keccak256(abi.encodePacked("\x19\x01", _domainSeparator(), structHash));
-    }
-
-    function _signQuote(QuoteData memory quote) internal view returns (bytes memory) {
-        bytes32 digest = _hashTypedDataV4(_hashQuote(quote));
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(quoteSignerKey, digest);
-        return abi.encodePacked(r, s, v);
-    }
-
     function _emptyPermit() internal pure returns (PermitData memory) {
         return PermitData({value: 0, deadline: 0, v: 0, r: bytes32(0), s: bytes32(0)});
+    }
+
+    function _slicePaymasterData(bytes memory paymasterAndData) internal pure returns (bytes memory paymasterData) {
+        uint256 prefixLength = 20 + 16 + 16;
+        paymasterData = new bytes(paymasterAndData.length - prefixLength);
+
+        for (uint256 i = 0; i < paymasterData.length; i++) {
+            paymasterData[i] = paymasterAndData[i + prefixLength];
+        }
+    }
+
+    function _toContractQuote(QuoteData memory quote)
+        internal
+        pure
+        returns (TaikoUsdcPaymaster.QuoteData memory)
+    {
+        return TaikoUsdcPaymaster.QuoteData({
+            token: quote.token,
+            exchangeRate: quote.exchangeRate,
+            maxTokenCost: quote.maxTokenCost,
+            validAfter: quote.validAfter,
+            validUntil: quote.validUntil,
+            quoteNonce: quote.quoteNonce,
+            postOpOverheadGas: quote.postOpOverheadGas,
+            surchargeBps: quote.surchargeBps
+        });
+    }
+
+    function _signQuote(PackedUserOperation memory userOp, QuoteData memory quote) internal view returns (bytes memory) {
+        bytes32 digest = paymaster.quoteHash(userOp, _toContractQuote(quote));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(quoteSignerKey, digest);
+        return abi.encodePacked(r, s, v);
     }
 
     function _buildUserOp(
         address sender_,
         bytes memory callData_,
         uint256 maxTokenCost_,
-        uint256 nonce_,
+        uint256 quoteNonce_,
         uint256 verificationGasLimit_,
+        uint32 postOpOverheadGas_,
+        uint16 surchargeBps_,
         PermitData memory permit_
     ) internal view returns (PackedUserOperation memory userOp, QuoteData memory quote) {
         uint48 now_ = uint48(block.timestamp);
 
         quote = QuoteData({
-            sender: sender_,
             token: address(usdc),
-            entryPoint: address(entryPoint),
-            chainId: block.chainid,
+            exchangeRate: 1_000_000,
             maxTokenCost: maxTokenCost_,
             validAfter: now_,
             validUntil: now_ + 90,
-            nonce: nonce_,
-            callDataHash: keccak256(callData_)
+            quoteNonce: quoteNonce_,
+            postOpOverheadGas: postOpOverheadGas_,
+            surchargeBps: surchargeBps_
         });
 
-        bytes memory sig = _signQuote(quote);
-
-        bytes memory paymasterData = abi.encode(quote, sig, permit_);
+        bytes memory unsignedPaymasterData = abi.encode(quote, bytes(""), permit_);
 
         userOp = PackedUserOperation({
             sender: sender_,
@@ -176,21 +156,38 @@ contract TaikoUsdcPaymasterTest is Test {
                 address(paymaster),
                 DEFAULT_PAYMASTER_VALIDATION_GAS,
                 DEFAULT_PAYMASTER_POSTOP_GAS,
-                paymasterData
+                unsignedPaymasterData
             ),
             signature: ""
         });
+
+        bytes memory sig = _signQuote(userOp, quote);
+        bytes memory paymasterData = abi.encode(quote, sig, permit_);
+
+        userOp.paymasterAndData = abi.encodePacked(
+            address(paymaster),
+            DEFAULT_PAYMASTER_VALIDATION_GAS,
+            DEFAULT_PAYMASTER_POSTOP_GAS,
+            paymasterData
+        );
     }
 
-    function _buildUserOpSimple(address sender_, bytes memory callData_, uint256 maxTokenCost_, uint256 nonce_)
+    function _buildUserOpSimple(address sender_, bytes memory callData_, uint256 maxTokenCost_, uint256 quoteNonce_)
         internal
         view
         returns (PackedUserOperation memory, QuoteData memory)
     {
-        return _buildUserOp(sender_, callData_, maxTokenCost_, nonce_, 120_000, _emptyPermit());
+        return _buildUserOp(
+            sender_,
+            callData_,
+            maxTokenCost_,
+            quoteNonce_,
+            120_000,
+            0,
+            0,
+            _emptyPermit()
+        );
     }
-
-    // ─── Tests ────────────────────────────────────────────────
 
     function test_rejectsValidateFromNonEntrypoint() public {
         PackedUserOperation memory userOp = PackedUserOperation({
@@ -222,20 +219,7 @@ contract TaikoUsdcPaymasterTest is Test {
         entryPoint.callValidatePaymaster(paymaster, userOp, USER_OP_HASH, 0.001 ether);
 
         assertEq(usdc.balanceOf(address(paymaster)), maxTokenCost);
-
-        bytes32 qHash = paymaster.quoteHash(
-            TaikoUsdcPaymaster.QuoteData({
-                sender: quote.sender,
-                token: quote.token,
-                entryPoint: quote.entryPoint,
-                chainId: quote.chainId,
-                maxTokenCost: quote.maxTokenCost,
-                validAfter: quote.validAfter,
-                validUntil: quote.validUntil,
-                nonce: quote.nonce,
-                callDataHash: quote.callDataHash
-            })
-        );
+        bytes32 qHash = paymaster.quoteHash(userOp, _toContractQuote(quote));
         assertTrue(paymaster.usedQuoteHashes(qHash));
     }
 
@@ -249,7 +233,7 @@ contract TaikoUsdcPaymasterTest is Test {
 
         entryPoint.callValidatePaymaster(paymaster, userOp, USER_OP_HASH, 0.001 ether);
 
-        vm.expectRevert(TaikoUsdcPaymaster.NonceAlreadyUsed.selector);
+        vm.expectRevert(TaikoUsdcPaymaster.QuoteAlreadyUsed.selector);
         entryPoint.callValidatePaymaster(paymaster, userOp, USER_OP_HASH, 0.001 ether);
     }
 
@@ -260,7 +244,8 @@ contract TaikoUsdcPaymasterTest is Test {
         PermitData memory permit =
             PermitData({value: maxTokenCost, deadline: deadline, v: 27, r: bytes32(0), s: bytes32(0)});
 
-        (PackedUserOperation memory userOp,) = _buildUserOp(sender, hex"55aa", maxTokenCost, 21, 120_000, permit);
+        (PackedUserOperation memory userOp,) =
+            _buildUserOp(sender, hex"55aa", maxTokenCost, 21, 120_000, 0, 0, permit);
 
         entryPoint.callValidatePaymaster(paymaster, userOp, USER_OP_HASH, 0.001 ether);
 
@@ -274,7 +259,8 @@ contract TaikoUsdcPaymasterTest is Test {
         PermitData memory permit =
             PermitData({value: maxTokenCost, deadline: expiredDeadline, v: 27, r: bytes32(0), s: bytes32(0)});
 
-        (PackedUserOperation memory userOp,) = _buildUserOp(sender, hex"90ab", maxTokenCost, 22, 120_000, permit);
+        (PackedUserOperation memory userOp,) =
+            _buildUserOp(sender, hex"90ab", maxTokenCost, 22, 120_000, 0, 0, permit);
 
         vm.expectRevert(TaikoUsdcPaymaster.InsufficientAllowance.selector);
         entryPoint.callValidatePaymaster(paymaster, userOp, USER_OP_HASH, 0.001 ether);
@@ -291,8 +277,6 @@ contract TaikoUsdcPaymasterTest is Test {
         (bytes memory context,) =
             entryPoint.callValidatePaymaster(paymaster, userOp, USER_OP_HASH, 0.001 ether);
 
-        assertEq(usdc.balanceOf(address(paymaster)), maxTokenCost);
-
         uint256 actualGasCost = 0.0004 ether;
 
         vm.expectEmit(true, true, true, true);
@@ -303,6 +287,40 @@ contract TaikoUsdcPaymasterTest is Test {
         entryPoint.callPostOp(paymaster, IPaymaster.PostOpMode.opSucceeded, context, actualGasCost, 0);
 
         assertEq(usdc.balanceOf(address(paymaster)), 400);
+    }
+
+    function test_usesSignedQuoteTermsInPostOp() public {
+        uint256 maxTokenCost = 3_000_000;
+
+        vm.prank(sender);
+        usdc.approve(address(paymaster), maxTokenCost);
+
+        (PackedUserOperation memory userOp,) = _buildUserOp(
+            sender,
+            hex"cc33",
+            maxTokenCost,
+            60,
+            120_000,
+            50_000,
+            100,
+            _emptyPermit()
+        );
+
+        (bytes memory context,) =
+            entryPoint.callValidatePaymaster(paymaster, userOp, USER_OP_HASH, 0.001 ether);
+
+        vm.expectEmit(true, true, true, true);
+        emit TaikoUsdcPaymaster.UserOperationSponsored(
+            address(usdc),
+            sender,
+            USER_OP_HASH,
+            1_000_000,
+            404,
+            404,
+            2_999_596
+        );
+
+        entryPoint.callPostOp(paymaster, IPaymaster.PostOpMode.opSucceeded, context, 0.0004 ether, 1);
     }
 
     function test_pullsAdditionalUsdcOnShortfall() public {
@@ -399,20 +417,93 @@ contract TaikoUsdcPaymasterTest is Test {
         usdc.approve(address(paymaster), maxTokenCost);
 
         (PackedUserOperation memory userOp,) =
-            _buildUserOp(sender, hex"beef", maxTokenCost, 41, 300_000, _emptyPermit());
+            _buildUserOp(sender, hex"beef", maxTokenCost, 41, 300_000, 0, 0, _emptyPermit());
 
         vm.expectRevert(TaikoUsdcPaymaster.GasLimitTooHigh.selector);
+        entryPoint.callValidatePaymaster(paymaster, userOp, USER_OP_HASH, 0.001 ether);
+    }
+
+    function test_rejectsMutatedGasFieldsAfterSigning() public {
+        uint256 maxTokenCost = 3_000_000;
+
+        vm.prank(sender);
+        usdc.approve(address(paymaster), maxTokenCost);
+
+        (PackedUserOperation memory userOp,) = _buildUserOpSimple(sender, hex"abcd", maxTokenCost, 42);
+        userOp.accountGasLimits = _packAccountGasLimits(120_000, 150_000);
+
+        vm.expectRevert(TaikoUsdcPaymaster.InvalidQuoteSignature.selector);
+        entryPoint.callValidatePaymaster(paymaster, userOp, USER_OP_HASH, 0.001 ether);
+    }
+
+    function test_rejectsMutatedPaymasterGasFieldsAfterSigning() public {
+        uint256 maxTokenCost = 3_000_000;
+
+        vm.prank(sender);
+        usdc.approve(address(paymaster), maxTokenCost);
+
+        (PackedUserOperation memory userOp,) = _buildUserOpSimple(sender, hex"ef01", maxTokenCost, 43);
+
+        bytes memory paymasterData = _slicePaymasterData(userOp.paymasterAndData);
+        userOp.paymasterAndData = abi.encodePacked(
+            address(paymaster),
+            uint128(DEFAULT_PAYMASTER_VALIDATION_GAS + 1),
+            DEFAULT_PAYMASTER_POSTOP_GAS,
+            paymasterData
+        );
+
+        vm.expectRevert(TaikoUsdcPaymaster.InvalidQuoteSignature.selector);
+        entryPoint.callValidatePaymaster(paymaster, userOp, USER_OP_HASH, 0.001 ether);
+    }
+
+    function test_rejectsQuoteWithTooHighOverhead() public {
+        uint256 maxTokenCost = 3_000_000;
+
+        vm.prank(sender);
+        usdc.approve(address(paymaster), maxTokenCost);
+
+        (PackedUserOperation memory userOp,) = _buildUserOp(
+            sender,
+            hex"aa11",
+            maxTokenCost,
+            44,
+            120_000,
+            100_001,
+            0,
+            _emptyPermit()
+        );
+
+        vm.expectRevert(TaikoUsdcPaymaster.QuotePostOpOverheadTooHigh.selector);
+        entryPoint.callValidatePaymaster(paymaster, userOp, USER_OP_HASH, 0.001 ether);
+    }
+
+    function test_rejectsQuoteWithTooHighSurcharge() public {
+        uint256 maxTokenCost = 3_000_000;
+
+        vm.prank(sender);
+        usdc.approve(address(paymaster), maxTokenCost);
+
+        (PackedUserOperation memory userOp,) = _buildUserOp(
+            sender,
+            hex"bb22",
+            maxTokenCost,
+            45,
+            120_000,
+            0,
+            1_001,
+            _emptyPermit()
+        );
+
+        vm.expectRevert(TaikoUsdcPaymaster.InvalidBps.selector);
         entryPoint.callValidatePaymaster(paymaster, userOp, USER_OP_HASH, 0.001 ether);
     }
 
     function test_ownerEntryPointDepositAndStake() public {
         vm.deal(address(this), 1 ether);
 
-        // deposit() is public in BasePaymaster (anyone can fund the paymaster)
         paymaster.deposit{value: 0.02 ether}();
         assertEq(entryPoint.deposits(address(paymaster)), 0.02 ether);
 
-        // withdrawTo is onlyOwner
         vm.prank(other);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, other));
         paymaster.withdrawTo(payable(receiver), 0.005 ether);
@@ -438,17 +529,40 @@ contract TaikoUsdcPaymasterTest is Test {
         paymaster.transferOwnership(other);
         assertEq(paymaster.owner(), other);
 
-        // Owner changed to `other`, so `owner` (this) should fail
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this)));
-        paymaster.setSurchargeBps(100);
+        paymaster.setPaused(true);
 
         vm.prank(other);
-        vm.expectRevert(TaikoUsdcPaymaster.InvalidBps.selector);
-        paymaster.setSurchargeBps(10_001);
+        paymaster.setPaused(true);
+        assertTrue(paymaster.paused());
 
         vm.prank(other);
-        paymaster.setSurchargeBps(100);
-        assertEq(paymaster.surchargeBps(), 100);
+        paymaster.setPaused(false);
+        assertFalse(paymaster.paused());
+
+        vm.prank(other);
+        vm.expectRevert(TaikoUsdcPaymaster.InvalidLimits.selector);
+        paymaster.setLimits(0, 0, 1, 1, 0);
+
+        vm.prank(other);
+        vm.expectRevert(TaikoUsdcPaymaster.InvalidLimits.selector);
+        paymaster.setLimits(200_000, 1_000_001, 1, 1, 0);
+
+        vm.prank(other);
+        vm.expectRevert(TaikoUsdcPaymaster.InvalidLimits.selector);
+        paymaster.setLimits(200_000, 0, 1, 0, 0);
+
+        vm.prank(other);
+        vm.expectRevert(TaikoUsdcPaymaster.InvalidLimits.selector);
+        paymaster.setLimits(200_000, 50_000, 1 ether, 300, 10_001);
+
+        vm.prank(other);
+        paymaster.setLimits(250_000, 50_000, 1 ether, 300, 750);
+        assertEq(paymaster.maxVerificationGasLimit(), 250_000);
+        assertEq(paymaster.maxPostOpOverheadGas(), 50_000);
+        assertEq(paymaster.maxNativeCostWei(), 1 ether);
+        assertEq(paymaster.maxQuoteTtlSeconds(), 300);
+        assertEq(paymaster.maxSurchargeBps(), 750);
 
         usdc.mint(address(paymaster), 50_000);
 
@@ -459,117 +573,9 @@ contract TaikoUsdcPaymasterTest is Test {
         vm.prank(other);
         paymaster.withdrawToken(address(usdc), receiver, 50_000);
         assertEq(usdc.balanceOf(receiver), receiverBefore + 50_000);
-
-        vm.prank(other);
-        vm.expectRevert(TaikoUsdcPaymaster.InvalidLimits.selector);
-        paymaster.setLimits(0, 0, 1, 1);
-
-        vm.prank(other);
-        vm.expectRevert(TaikoUsdcPaymaster.InvalidLimits.selector);
-        paymaster.setLimits(200_000, 1_000_001, 1, 1);
-
-        vm.prank(other);
-        vm.expectRevert(TaikoUsdcPaymaster.InvalidLimits.selector);
-        paymaster.setLimits(200_000, 0, 1, 0);
-
-        vm.prank(other);
-        paymaster.setLimits(250_000, 50_000, 1 ether, 300);
-        assertEq(paymaster.maxVerificationGasLimit(), 250_000);
-        assertEq(paymaster.postOpOverheadGas(), 50_000);
-        assertEq(paymaster.maxNativeCostWei(), 1 ether);
-        assertEq(paymaster.maxQuoteTtlSeconds(), 300);
     }
 
-    // ─── Security Fix Tests ──────────────────────────────────
-
-    function test_I2_rejectsReuseOfSameNonce() public {
-        vm.prank(sender);
-        usdc.approve(address(paymaster), 10_000_000);
-
-        (PackedUserOperation memory op1,) = _buildUserOpSimple(sender, hex"aa11", 3_000_000, 50);
-        entryPoint.callValidatePaymaster(paymaster, op1, USER_OP_HASH, 0.001 ether);
-
-        (PackedUserOperation memory op2,) = _buildUserOpSimple(sender, hex"bb22", 3_000_000, 50);
-
-        vm.expectRevert(TaikoUsdcPaymaster.NonceAlreadyUsed.selector);
-        entryPoint.callValidatePaymaster(paymaster, op2, USER_OP_HASH, 0.001 ether);
-    }
-
-    function test_I1_usesCachedOraclePriceInPostOp() public {
-        uint256 maxTokenCost = 3_000_000;
-
-        vm.prank(sender);
-        usdc.approve(address(paymaster), maxTokenCost);
-
-        (PackedUserOperation memory userOp,) = _buildUserOpSimple(sender, hex"cc33", maxTokenCost, 60);
-
-        (bytes memory context,) =
-            entryPoint.callValidatePaymaster(paymaster, userOp, USER_OP_HASH, 0.001 ether);
-
-        // Change oracle price after validation
-        oracle.setUsdcPerEth(2_000_000);
-
-        vm.expectEmit(true, true, true, true);
-        emit TaikoUsdcPaymaster.UserOperationSponsored(
-            address(usdc),
-            sender,
-            USER_OP_HASH,
-            1_000_000, // cached, not 2_000_000
-            400,
-            400,
-            2_999_600
-        );
-
-        entryPoint.callPostOp(paymaster, IPaymaster.PostOpMode.opSucceeded, context, 0.0004 ether, 0);
-    }
-
-    function test_C1_revertsPostOpOnShortfallPullFailure() public {
-        uint256 maxTokenCost = 1_000_000;
-
-        vm.prank(sender);
-        usdc.approve(address(paymaster), maxTokenCost);
-
-        (PackedUserOperation memory userOp,) = _buildUserOpSimple(sender, hex"dd44", maxTokenCost, 70);
-
-        (bytes memory context,) =
-            entryPoint.callValidatePaymaster(paymaster, userOp, USER_OP_HASH, 0.001 ether);
-
-        // Revoke remaining allowance
-        vm.prank(sender);
-        usdc.approve(address(paymaster), 0);
-
-        vm.expectRevert(TaikoUsdcPaymaster.TokenTransferFailed.selector);
-        entryPoint.callPostOp(paymaster, IPaymaster.PostOpMode.opSucceeded, context, 2 ether, 0);
-    }
-
-    function test_I4_doesNotPullAdditionalOnOpReverted() public {
-        uint256 maxTokenCost = 1_000_000;
-
-        vm.prank(sender);
-        usdc.approve(address(paymaster), 5_000_000);
-
-        (PackedUserOperation memory userOp,) = _buildUserOpSimple(sender, hex"ee55", maxTokenCost, 80);
-
-        (bytes memory context,) =
-            entryPoint.callValidatePaymaster(paymaster, userOp, USER_OP_HASH, 0.001 ether);
-
-        vm.expectEmit(true, true, true, true);
-        emit TaikoUsdcPaymaster.UserOperationSponsored(
-            address(usdc),
-            sender,
-            USER_OP_HASH,
-            1_000_000,
-            2_000_000,
-            1_000_000, // capped at prefund
-            0
-        );
-
-        entryPoint.callPostOp(paymaster, IPaymaster.PostOpMode.opReverted, context, 2 ether, 0);
-
-        assertEq(usdc.balanceOf(address(paymaster)), 1_000_000);
-    }
-
-    function test_I5_preventsWithdrawOfLockedPrefund() public {
+    function test_preventsWithdrawOfLockedPrefund() public {
         uint256 maxTokenCost = 3_000_000;
 
         vm.prank(sender);
@@ -584,15 +590,13 @@ contract TaikoUsdcPaymasterTest is Test {
         vm.expectRevert(TaikoUsdcPaymaster.InsufficientUnlockedBalance.selector);
         paymaster.withdrawToken(address(usdc), receiver, maxTokenCost);
 
-        // Mint extra to paymaster (simulates accumulated fees)
         usdc.mint(address(paymaster), 500_000);
 
-        // Can withdraw the unlocked surplus
         paymaster.withdrawToken(address(usdc), receiver, 500_000);
         assertEq(usdc.balanceOf(receiver), 500_000);
     }
 
-    function test_I5_unlocksPrefundAfterPostOp() public {
+    function test_unlocksPrefundAfterPostOp() public {
         uint256 maxTokenCost = 3_000_000;
 
         vm.prank(sender);

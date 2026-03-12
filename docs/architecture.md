@@ -18,7 +18,7 @@
 
 - Bundler base: fork `pimlicolabs/alto` (TypeScript) for faster integration with our stack.
 - Paymaster style: verifying paymaster with signed quotes and USDC settlement in `postOp`.
-- Oracle model: off-chain quote service signs bounded quotes; no external oracle calls in on-chain validation.
+- Pricing model: off-chain quote service is the single pricing authority and signs bounded quotes; no external oracle calls in on-chain validation.
 - Data store: SQLite for MVP operations (quote nonce tracking, sponsorship records, replay protection).
 - Node requirement: self-hosted Taiko node (or provider) with `debug_traceCall` enabled.
 
@@ -64,8 +64,8 @@ Responsibilities:
 Key routes (MVP):
 
 - `POST /v1/paymaster/quote`
-  - Input: sender, chainId, entryPoint, callData hash, gas limits, max fee params, token (`USDC`), permit payload.
-  - Output: paymaster fields (`paymaster`, `paymasterData`, `paymasterVerificationGasLimit`, `paymasterPostOpGasLimit`, `validUntil`, `quoteId`).
+  - Input: sender, chainId, entryPoint, gas fee params, token (`USDC`), permit payload.
+  - Output: paymaster fields plus the exact gas limits the signed quote is bound to (`callGasLimit`, `verificationGasLimit`, `preVerificationGas`, `paymasterVerificationGasLimit`, `paymasterPostOpGasLimit`, `validUntil`, `quoteId`).
 - `POST /rpc`
   - Proxy for `eth_sendUserOperation`, `eth_estimateUserOperationGas`, `eth_getUserOperationReceipt`, `eth_supportedEntryPoints`.
 - `GET /health`
@@ -154,15 +154,15 @@ Packed fields:
 
 - EntryPoint caller.
 - Supported token address (`USDC` only in MVP).
-- Signed quote authenticity and expiry.
-- Nonce replay protection.
+- Signed quote authenticity, expiry, and replay protection.
 - Gas bounds sanity (`verificationGas`, `postOpGas`, max fee constraints).
+- Full sponsorship hash binding across UserOp gas fields and signed quote terms.
 
 Returns context for `postOp` settlement.
 
 ## 8.4 Settlement Path (`postOp`)
 
-- Compute actual token charge from actual gas cost + configured surcharge.
+- Compute actual token charge from actual gas cost + signed surcharge and signed exchange rate.
 - Pull USDC via permit/allowance path.
 - Refund excess if prefund > actual.
 - Emit accounting event with effective price/cost values.
@@ -170,7 +170,7 @@ Returns context for `postOp` settlement.
 ## 8.5 Oracle / Pricing Strategy
 
 - No external oracle call inside contract validation.
-- Off-chain quote service computes price and signs bounded quote.
+- Off-chain quote service computes price and signs bounded quote terms, including the exchange rate used in settlement.
 - Safety rails:
   - short TTL (for example 30-90 seconds)
   - max slippage cap
@@ -233,10 +233,10 @@ All REST responses include deterministic error codes for client retry behavior.
 
 ## 11) Security Model
 
-- Replay protection via quote nonce tracking (DB + on-chain nonce coupling where needed).
+- Replay protection via quote hash tracking.
 - Strict quote TTL and chain binding.
-- Quote signatures include sender, chainId, entryPoint, callData hash, gas limits, max token charge, expiry.
-- Circuit breaker to disable sponsorship when oracle/feed confidence is low.
+- Quote signatures bind the sponsorship-relevant UserOp fields, gas limits, max token charge, exchange rate, surcharge, expiry, and quote nonce.
+- Circuit breaker to disable sponsorship when the pricing backend is stale or outside deviation thresholds.
 - Separate keys:
   - bundler tx sender key
   - quote signer key

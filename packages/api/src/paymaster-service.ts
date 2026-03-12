@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { encodeAbiParameters, keccak256 } from "viem";
+import { concatHex, encodeAbiParameters, keccak256, toHex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 import type { BundlerClient } from "./bundler-client.js";
@@ -12,20 +12,24 @@ const HEX_BYTES_PATTERN = /^0x(?:[0-9a-fA-F]{2})*$/;
 const WEI_PER_ETH = 10n ** 18n;
 const ZERO_BYTES32 = `0x${"0".repeat(64)}` as const;
 const QUOTE_ID_LENGTH = 24;
+const UINT128_MAX = (1n << 128n) - 1n;
+const UINT48_MAX = (1n << 48n) - 1n;
+const UINT32_MAX = (1n << 32n) - 1n;
+const UINT16_MAX = (1n << 16n) - 1n;
+
 const PAYMASTER_DATA_PARAMETERS = [
   {
     type: "tuple",
     name: "quote",
     components: [
-      { name: "sender", type: "address" },
       { name: "token", type: "address" },
-      { name: "entryPoint", type: "address" },
-      { name: "chainId", type: "uint256" },
+      { name: "exchangeRate", type: "uint256" },
       { name: "maxTokenCost", type: "uint256" },
       { name: "validAfter", type: "uint48" },
       { name: "validUntil", type: "uint48" },
-      { name: "nonce", type: "uint256" },
-      { name: "callDataHash", type: "bytes32" },
+      { name: "quoteNonce", type: "uint256" },
+      { name: "postOpOverheadGas", type: "uint32" },
+      { name: "surchargeBps", type: "uint16" },
     ],
   },
   {
@@ -45,30 +49,38 @@ const PAYMASTER_DATA_PARAMETERS = [
   },
 ] as const;
 
-const QUOTE_TYPES = {
-  QuoteData: [
+const SPONSORED_USER_OPERATION_TYPES = {
+  SponsoredUserOperation: [
     { name: "sender", type: "address" },
+    { name: "nonce", type: "uint256" },
+    { name: "initCodeHash", type: "bytes32" },
+    { name: "callDataHash", type: "bytes32" },
+    { name: "accountGasLimits", type: "bytes32" },
+    { name: "paymasterGasLimits", type: "bytes32" },
+    { name: "preVerificationGas", type: "uint256" },
+    { name: "gasFees", type: "bytes32" },
     { name: "token", type: "address" },
-    { name: "entryPoint", type: "address" },
-    { name: "chainId", type: "uint256" },
+    { name: "exchangeRate", type: "uint256" },
     { name: "maxTokenCost", type: "uint256" },
     { name: "validAfter", type: "uint48" },
     { name: "validUntil", type: "uint48" },
-    { name: "nonce", type: "uint256" },
-    { name: "callDataHash", type: "bytes32" },
+    { name: "quoteNonce", type: "uint256" },
+    { name: "postOpOverheadGas", type: "uint32" },
+    { name: "surchargeBps", type: "uint16" },
+    { name: "chainId", type: "uint256" },
+    { name: "paymaster", type: "address" },
   ],
 } as const;
 
 interface QuoteData {
-  sender: `0x${string}`;
   token: `0x${string}`;
-  entryPoint: `0x${string}`;
-  chainId: bigint;
+  exchangeRate: bigint;
   maxTokenCost: bigint;
   validAfter: number;
   validUntil: number;
-  nonce: bigint;
-  callDataHash: `0x${string}`;
+  quoteNonce: bigint;
+  postOpOverheadGas: number;
+  surchargeBps: number;
 }
 
 interface PermitData {
@@ -77,6 +89,27 @@ interface PermitData {
   v: number;
   r: `0x${string}`;
   s: `0x${string}`;
+}
+
+interface SponsoredUserOperationMessage {
+  sender: `0x${string}`;
+  nonce: bigint;
+  initCodeHash: `0x${string}`;
+  callDataHash: `0x${string}`;
+  accountGasLimits: `0x${string}`;
+  paymasterGasLimits: `0x${string}`;
+  preVerificationGas: bigint;
+  gasFees: `0x${string}`;
+  token: `0x${string}`;
+  exchangeRate: bigint;
+  maxTokenCost: bigint;
+  validAfter: number;
+  validUntil: number;
+  quoteNonce: bigint;
+  postOpOverheadGas: number;
+  surchargeBps: number;
+  chainId: bigint;
+  paymaster: `0x${string}`;
 }
 
 const EMPTY_PERMIT: PermitData = {
@@ -120,7 +153,10 @@ interface ParsedQuoteInput {
   token: "USDC";
   userOperation: Record<string, unknown>;
   userOperationNonce: bigint;
+  initCode: `0x${string}`;
   callData: `0x${string}`;
+  maxFeePerGas: bigint;
+  maxPriorityFeePerGas: bigint;
 }
 
 export interface PaymasterQuote {
@@ -131,6 +167,9 @@ export interface PaymasterQuote {
   paymaster: string;
   paymasterData: `0x${string}`;
   paymasterAndData: `0x${string}`;
+  callGasLimit: `0x${string}`;
+  verificationGasLimit: `0x${string}`;
+  preVerificationGas: `0x${string}`;
   paymasterVerificationGasLimit: `0x${string}`;
   paymasterPostOpGasLimit: `0x${string}`;
   estimatedGasLimit: `0x${string}`;
@@ -143,22 +182,48 @@ export interface PaymasterQuote {
   tokenAddress: string;
 }
 
+export interface PriceProvider {
+  getUsdcPerEthMicros(chain: ChainName): bigint | Promise<bigint>;
+  describe(): string;
+}
+
+export class StaticPriceProvider implements PriceProvider {
+  private readonly usdcPerEthMicros: bigint;
+
+  constructor(usdcPerEthMicros: bigint) {
+    if (usdcPerEthMicros <= 0n) {
+      throw new Error("Static price provider requires a positive usdcPerEthMicros value");
+    }
+
+    this.usdcPerEthMicros = usdcPerEthMicros;
+  }
+
+  getUsdcPerEthMicros(): bigint {
+    return this.usdcPerEthMicros;
+  }
+
+  describe(): string {
+    return "static";
+  }
+}
+
 export interface PaymasterServiceConfig {
   paymasterAddress: string;
   quoteTtlSeconds: number;
-  usdcPerEthMicros: bigint;
   surchargeBps: number;
   quoteSignerPrivateKey: `0x${string}`;
   defaultPaymasterVerificationGasLimit: bigint;
   defaultPaymasterPostOpGasLimit: bigint;
   tokenAddresses: Partial<Record<ChainName, string>>;
+  priceProvider: PriceProvider;
 }
 
 export type PaymasterServiceConfigInput = Omit<
   Partial<PaymasterServiceConfig>,
-  "tokenAddresses"
+  "tokenAddresses" | "priceProvider"
 > & {
   tokenAddresses?: Partial<Record<ChainName, string>>;
+  priceProvider?: PriceProvider;
 };
 
 const OPERATIONAL_DEFAULTS = {
@@ -332,8 +397,6 @@ const parseQuoteInput = (input: unknown): ParsedQuoteInput => {
   }
 
   const chain = resolveChain(input.chain, input.chainId);
-  const userOperationNonce = parseHexQuantity(userOperationRaw.nonce, "userOperation.nonce");
-  const callData = parseBytes(userOperationRaw.callData, "userOperation.callData");
 
   return {
     sender,
@@ -341,10 +404,46 @@ const parseQuoteInput = (input: unknown): ParsedQuoteInput => {
     chain,
     token: "USDC",
     userOperation: userOperationRaw,
-    userOperationNonce,
-    callData,
+    userOperationNonce: parseHexQuantity(userOperationRaw.nonce, "userOperation.nonce"),
+    initCode: parseBytes(userOperationRaw.initCode ?? "0x", "userOperation.initCode"),
+    callData: parseBytes(userOperationRaw.callData, "userOperation.callData"),
+    maxFeePerGas: parseHexQuantity(userOperationRaw.maxFeePerGas, "userOperation.maxFeePerGas"),
+    maxPriorityFeePerGas: parseHexQuantity(
+      userOperationRaw.maxPriorityFeePerGas,
+      "userOperation.maxPriorityFeePerGas",
+    ),
   };
 };
+
+const toUint128Hex = (value: bigint, fieldName: string): `0x${string}` => {
+  if (value < 0n || value > UINT128_MAX) {
+    throw new Error(`${fieldName} exceeds uint128`);
+  }
+
+  return toHex(value, { size: 16 });
+};
+
+const toBoundedNumber = (value: bigint, maxValue: bigint, fieldName: string): number => {
+  if (value < 0n || value > maxValue) {
+    throw new Error(`${fieldName} exceeds supported range`);
+  }
+
+  return Number(value);
+};
+
+const packUint128Pair = (
+  first: bigint,
+  second: bigint,
+  firstFieldName: string,
+  secondFieldName: string,
+): `0x${string}` =>
+  concatHex([
+    toUint128Hex(first, firstFieldName),
+    toUint128Hex(second, secondFieldName),
+  ]) as `0x${string}`;
+
+const buildQuoteNonce = (payload: Record<string, unknown>): bigint =>
+  BigInt(`0x${createHash("sha256").update(JSON.stringify(payload)).digest("hex")}`);
 
 export class PaymasterService {
   private readonly bundlerClient: BundlerClient;
@@ -374,8 +473,8 @@ export class PaymasterService {
       throw new Error("paymasterAddress is required");
     }
 
-    if (!config.usdcPerEthMicros || config.usdcPerEthMicros <= 0n) {
-      throw new Error("usdcPerEthMicros must be configured and greater than zero");
+    if (config.priceProvider === undefined) {
+      throw new Error("priceProvider is required");
     }
 
     const normalizedTokenAddresses = normalizeOptionalTokenAddresses(tokenAddresses);
@@ -383,11 +482,15 @@ export class PaymasterService {
       throw new Error("At least one chain token address must be configured");
     }
 
+    const surchargeBps = Math.max(0, config.surchargeBps ?? OPERATIONAL_DEFAULTS.surchargeBps);
+    if (surchargeBps > 10_000) {
+      throw new Error("surchargeBps must be between 0 and 10000");
+    }
+
     this.config = {
       paymasterAddress: normalizeAddress(config.paymasterAddress, "paymasterAddress"),
       quoteTtlSeconds: Math.max(15, config.quoteTtlSeconds ?? OPERATIONAL_DEFAULTS.quoteTtlSeconds),
-      usdcPerEthMicros: config.usdcPerEthMicros,
-      surchargeBps: Math.max(0, config.surchargeBps ?? OPERATIONAL_DEFAULTS.surchargeBps),
+      surchargeBps,
       quoteSignerPrivateKey,
       defaultPaymasterVerificationGasLimit:
         config.defaultPaymasterVerificationGasLimit ??
@@ -396,6 +499,7 @@ export class PaymasterService {
         config.defaultPaymasterPostOpGasLimit ??
         OPERATIONAL_DEFAULTS.defaultPaymasterPostOpGasLimit,
       tokenAddresses: normalizedTokenAddresses,
+      priceProvider: config.priceProvider,
     };
 
     this.quoteSigner = privateKeyToAccount(this.config.quoteSignerPrivateKey);
@@ -412,6 +516,7 @@ export class PaymasterService {
       supportedChains,
       supportedTokens: ["USDC"],
       signerAddress: this.quoteSigner.address,
+      priceSource: this.config.priceProvider.describe(),
     };
   }
 
@@ -424,14 +529,11 @@ export class PaymasterService {
       chainId: parsed.chain.chainId,
       token: parsed.token,
       userOperation: {
-        nonce: String(parsed.userOperation.nonce),
-        initCode: String(parsed.userOperation.initCode ?? "0x"),
+        nonce: parsed.userOperationNonce.toString(),
+        initCode: parsed.initCode,
         callData: parsed.callData,
-        callGasLimit: String(parsed.userOperation.callGasLimit ?? "0x"),
-        verificationGasLimit: String(parsed.userOperation.verificationGasLimit ?? "0x"),
-        preVerificationGas: String(parsed.userOperation.preVerificationGas ?? "0x"),
-        maxFeePerGas: String(parsed.userOperation.maxFeePerGas),
-        maxPriorityFeePerGas: String(parsed.userOperation.maxPriorityFeePerGas),
+        maxFeePerGas: parsed.maxFeePerGas.toString(),
+        maxPriorityFeePerGas: parsed.maxPriorityFeePerGas.toString(),
         l1DataGas: String(parsed.userOperation.l1DataGas ?? "0x"),
       },
     };
@@ -462,10 +564,6 @@ export class PaymasterService {
       paymasterVerificationGasLimit: this.config.defaultPaymasterVerificationGasLimit,
       paymasterPostOpGasLimit: this.config.defaultPaymasterPostOpGasLimit,
     });
-    const userOpMaxFeePerGas = parseHexQuantity(
-      parsed.userOperation.maxFeePerGas,
-      "userOperation.maxFeePerGas",
-    );
 
     const totalGasLimit =
       gas.callGasLimit +
@@ -474,40 +572,95 @@ export class PaymasterService {
       gas.paymasterVerificationGasLimit +
       gas.paymasterPostOpGasLimit;
 
-    const estimatedGasWei = totalGasLimit * userOpMaxFeePerGas;
+    const estimatedGasWei = totalGasLimit * parsed.maxFeePerGas;
+    const exchangeRate = await this.config.priceProvider.getUsdcPerEthMicros(parsed.chain.name);
+    if (exchangeRate <= 0n) {
+      throw new Error("priceProvider returned a non-positive exchange rate");
+    }
 
-    const baseMicros = (estimatedGasWei * this.config.usdcPerEthMicros) / WEI_PER_ETH;
+    const baseMicros = (estimatedGasWei * exchangeRate) / WEI_PER_ETH;
     const grossMicros =
       (baseMicros * BigInt(10_000 + this.config.surchargeBps) + BigInt(10_000 - 1)) /
       BigInt(10_000);
     const maxTokenCostMicros = grossMicros > 0n ? grossMicros : 1n;
 
-    const validAfter = Math.floor(this.nowMs() / 1000);
-    const validUntil = validAfter + this.config.quoteTtlSeconds;
-    const callDataHash = keccak256(parsed.callData);
+    const validAfterSeconds = Math.floor(this.nowMs() / 1000);
+    const validUntilSeconds = validAfterSeconds + this.config.quoteTtlSeconds;
+
+    const accountGasLimits = packUint128Pair(
+      gas.verificationGasLimit,
+      gas.callGasLimit,
+      "verificationGasLimit",
+      "callGasLimit",
+    );
+    const paymasterGasLimits = packUint128Pair(
+      gas.paymasterVerificationGasLimit,
+      gas.paymasterPostOpGasLimit,
+      "paymasterVerificationGasLimit",
+      "paymasterPostOpGasLimit",
+    );
+    const gasFees = packUint128Pair(
+      parsed.maxPriorityFeePerGas,
+      parsed.maxFeePerGas,
+      "maxPriorityFeePerGas",
+      "maxFeePerGas",
+    );
+
+    const quoteNonce = buildQuoteNonce({
+      requestKey: this.buildQuoteRequestKey(input),
+      validAfterSeconds,
+      validUntilSeconds,
+      exchangeRate: exchangeRate.toString(),
+      maxTokenCostMicros: maxTokenCostMicros.toString(),
+      paymasterGasLimits,
+    });
 
     const quoteData: QuoteData = {
-      sender: parsed.sender as `0x${string}`,
       token: tokenAddress as `0x${string}`,
-      entryPoint: parsed.entryPoint as `0x${string}`,
-      chainId: BigInt(parsed.chain.chainId),
+      exchangeRate,
       maxTokenCost: maxTokenCostMicros,
-      validAfter,
-      validUntil,
+      validAfter: toBoundedNumber(BigInt(validAfterSeconds), UINT48_MAX, "validAfter"),
+      validUntil: toBoundedNumber(BigInt(validUntilSeconds), UINT48_MAX, "validUntil"),
+      quoteNonce,
+      postOpOverheadGas: toBoundedNumber(
+        gas.paymasterPostOpGasLimit,
+        UINT32_MAX,
+        "postOpOverheadGas",
+      ),
+      surchargeBps: toBoundedNumber(BigInt(this.config.surchargeBps), UINT16_MAX, "surchargeBps"),
+    };
+
+    const message: SponsoredUserOperationMessage = {
+      sender: parsed.sender as `0x${string}`,
       nonce: parsed.userOperationNonce,
-      callDataHash,
+      initCodeHash: keccak256(parsed.initCode),
+      callDataHash: keccak256(parsed.callData),
+      accountGasLimits,
+      paymasterGasLimits,
+      preVerificationGas: gas.preVerificationGas,
+      gasFees,
+      token: quoteData.token,
+      exchangeRate: quoteData.exchangeRate,
+      maxTokenCost: quoteData.maxTokenCost,
+      validAfter: quoteData.validAfter,
+      validUntil: quoteData.validUntil,
+      quoteNonce: quoteData.quoteNonce,
+      postOpOverheadGas: quoteData.postOpOverheadGas,
+      surchargeBps: quoteData.surchargeBps,
+      chainId: BigInt(parsed.chain.chainId),
+      paymaster: this.config.paymasterAddress as `0x${string}`,
     };
 
     const quoteSignature = await this.quoteSigner.signTypedData({
       domain: {
         name: "TaikoUsdcPaymaster",
-        version: "1",
-        chainId: quoteData.chainId,
+        version: "2",
+        chainId: BigInt(parsed.chain.chainId),
         verifyingContract: this.config.paymasterAddress as `0x${string}`,
       },
-      types: QUOTE_TYPES,
-      primaryType: "QuoteData",
-      message: quoteData,
+      types: SPONSORED_USER_OPERATION_TYPES,
+      primaryType: "SponsoredUserOperation",
+      message,
     });
 
     const paymasterData = encodeAbiParameters(PAYMASTER_DATA_PARAMETERS, [
@@ -520,6 +673,7 @@ export class PaymasterService {
       .update(paymasterData.slice(2))
       .digest("hex")
       .slice(0, QUOTE_ID_LENGTH);
+
     const paymasterAndData =
       `${this.config.paymasterAddress}${paymasterData.slice(2)}` as `0x${string}`;
 
@@ -531,13 +685,16 @@ export class PaymasterService {
       paymaster: this.config.paymasterAddress,
       paymasterData,
       paymasterAndData,
+      callGasLimit: toHexQuantity(gas.callGasLimit),
+      verificationGasLimit: toHexQuantity(gas.verificationGasLimit),
+      preVerificationGas: toHexQuantity(gas.preVerificationGas),
       paymasterVerificationGasLimit: toHexQuantity(gas.paymasterVerificationGasLimit),
       paymasterPostOpGasLimit: toHexQuantity(gas.paymasterPostOpGasLimit),
       estimatedGasLimit: toHexQuantity(totalGasLimit),
       estimatedGasWei: toHexQuantity(estimatedGasWei),
       maxTokenCostMicros: maxTokenCostMicros.toString(),
       maxTokenCost: formatUsdcMicros(maxTokenCostMicros),
-      validUntil,
+      validUntil: validUntilSeconds,
       entryPoint: parsed.entryPoint,
       sender: parsed.sender,
       tokenAddress,
@@ -567,6 +724,9 @@ export class PaymasterService {
       paymaster: quote.paymaster,
       paymasterData: quote.paymasterData,
       paymasterAndData: quote.paymasterAndData,
+      callGasLimit: quote.callGasLimit,
+      verificationGasLimit: quote.verificationGasLimit,
+      preVerificationGas: quote.preVerificationGas,
       paymasterVerificationGasLimit: quote.paymasterVerificationGasLimit,
       paymasterPostOpGasLimit: quote.paymasterPostOpGasLimit,
       quoteId: quote.quoteId,

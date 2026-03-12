@@ -7,7 +7,11 @@ import { type BundlerClient, HttpBundlerClient } from "./bundler-client.js";
 import { logEvent } from "./logger.js";
 import { MetricsRegistry } from "./metrics.js";
 import { openApiDocument } from "./openapi.js";
-import { PaymasterService, type PaymasterServiceConfigInput } from "./paymaster-service.js";
+import {
+  PaymasterService,
+  StaticPriceProvider,
+  type PaymasterServiceConfigInput,
+} from "./paymaster-service.js";
 import type { PersistenceStore } from "./persistence.js";
 import { FixedWindowRateLimiter, type RateLimitResult } from "./rate-limit.js";
 import {
@@ -82,6 +86,10 @@ const parseOptionalAddress = (value: string | undefined): string | undefined => 
 
 const resolveConfig = (environment: NodeJS.ProcessEnv = process.env): ApiConfig => {
   const bundlerRpcUrl = environment.BUNDLER_RPC_URL ?? DEFAULT_BUNDLER_RPC_URL;
+  const staticUsdcPerEthMicros = parseBigIntWithFallback(
+    environment.PAYMASTER_STATIC_USDC_PER_ETH_MICROS,
+    0n,
+  );
   const tokenAddresses: NonNullable<PaymasterServiceConfigInput["tokenAddresses"]> = {};
 
   const mainnetToken = parseOptionalAddress(environment.USDC_MAINNET_ADDRESS);
@@ -110,18 +118,18 @@ const resolveConfig = (environment: NodeJS.ProcessEnv = process.env): ApiConfig 
     paymaster: {
       paymasterAddress: parseOptionalAddress(environment.PAYMASTER_ADDRESS),
       quoteTtlSeconds: parseIntWithFallback(environment.PAYMASTER_QUOTE_TTL_SECONDS, 90),
-      usdcPerEthMicros: parseBigIntWithFallback(environment.USDC_PER_ETH_MICROS, 0n),
       surchargeBps: parseIntWithFallback(environment.PAYMASTER_SURCHARGE_BPS, 500),
       quoteSignerPrivateKey: environment.PAYMASTER_QUOTE_SIGNER_PRIVATE_KEY as
         | `0x${string}`
         | undefined,
       tokenAddresses,
+      priceProvider:
+        staticUsdcPerEthMicros > 0n ? new StaticPriceProvider(staticUsdcPerEthMicros) : undefined,
     },
   };
 };
 
 export const validateConfig = (environment: NodeJS.ProcessEnv = process.env): void => {
-  const config = resolveConfig(environment);
   const errors: string[] = [];
   const configuredTokenAddresses = [
     ["USDC_MAINNET_ADDRESS", environment.USDC_MAINNET_ADDRESS],
@@ -141,10 +149,13 @@ export const validateConfig = (environment: NodeJS.ProcessEnv = process.env): vo
     errors.push("PAYMASTER_ADDRESS must be a valid 20-byte hex address");
   }
 
-  if (environment.USDC_PER_ETH_MICROS === undefined) {
-    errors.push("USDC_PER_ETH_MICROS is required");
-  } else if (!config.paymaster.usdcPerEthMicros || config.paymaster.usdcPerEthMicros <= 0n) {
-    errors.push("USDC_PER_ETH_MICROS must be greater than 0");
+  if (environment.PAYMASTER_STATIC_USDC_PER_ETH_MICROS === undefined) {
+    errors.push("PAYMASTER_STATIC_USDC_PER_ETH_MICROS is required");
+  } else {
+    const price = parseBigIntWithFallback(environment.PAYMASTER_STATIC_USDC_PER_ETH_MICROS, 0n);
+    if (price <= 0n) {
+      errors.push("PAYMASTER_STATIC_USDC_PER_ETH_MICROS must be greater than 0");
+    }
   }
 
   let validTokenAddressCount = 0;

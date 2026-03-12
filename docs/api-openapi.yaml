@@ -87,7 +87,7 @@ paths:
                   type: object
       responses:
         "200":
-          description: Quote payload including paymasterData and USDC estimate
+          description: Quote payload including paymasterData, bound gas fields, and USDC estimate
         "400":
           description: Invalid payload or gas estimation failure
         "429":

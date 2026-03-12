@@ -155,10 +155,28 @@ export class UserOperationBuilder {
     return this;
   }
 
-  withPaymasterQuote(quote: QuoteResponse | Pick<PaymasterRpcResult, "paymasterAndData">): this {
+  withPaymasterQuote(quote: QuoteResponse | PaymasterRpcResult): this {
     this.draft = {
       ...this.draft,
       paymasterAndData: assertHex(quote.paymasterAndData, "paymasterAndData"),
+      callGasLimit:
+        "callGasLimit" in quote ? assertHex(quote.callGasLimit, "callGasLimit") : this.draft.callGasLimit,
+      verificationGasLimit:
+        "verificationGasLimit" in quote
+          ? assertHex(quote.verificationGasLimit, "verificationGasLimit")
+          : this.draft.verificationGasLimit,
+      preVerificationGas:
+        "preVerificationGas" in quote
+          ? assertHex(quote.preVerificationGas, "preVerificationGas")
+          : this.draft.preVerificationGas,
+      paymasterVerificationGasLimit:
+        "paymasterVerificationGasLimit" in quote
+          ? assertHex(quote.paymasterVerificationGasLimit, "paymasterVerificationGasLimit")
+          : this.draft.paymasterVerificationGasLimit,
+      paymasterPostOpGasLimit:
+        "paymasterPostOpGasLimit" in quote
+          ? assertHex(quote.paymasterPostOpGasLimit, "paymasterPostOpGasLimit")
+          : this.draft.paymasterPostOpGasLimit,
     };
 
     return this;

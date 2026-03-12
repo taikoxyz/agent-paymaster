@@ -11,6 +11,7 @@ import { AgentPaymasterClient, type UserOperation } from "@agent-paymaster/sdk";
 
 import type { BundlerClient } from "./bundler-client.js";
 import { createApp } from "./index.js";
+import { StaticPriceProvider } from "./paymaster-service.js";
 import { FixedWindowRateLimiter } from "./rate-limit.js";
 import type { JsonRpcRequest, JsonRpcResponse, DependencyHealth } from "./types.js";
 
@@ -81,7 +82,7 @@ function createTestStack(options?: {
     rateLimiter: options?.rateLimiter,
     config: {
       paymaster: {
-        usdcPerEthMicros: options?.usdcPerEthMicros ?? USDC_PER_ETH_MICROS,
+        priceProvider: new StaticPriceProvider(options?.usdcPerEthMicros ?? USDC_PER_ETH_MICROS),
         quoteSignerPrivateKey: TEST_QUOTE_SIGNER_PRIVATE_KEY,
         paymasterAddress: TEST_PAYMASTER_ADDRESS,
         tokenAddresses: {
@@ -163,9 +164,11 @@ describe("integration: full UserOp lifecycle", () => {
     // Step 3: Attach paymaster data and send the UserOp
     const fullUserOp: UserOperation = {
       ...userOp,
-      callGasLimit: gasEstimate.callGasLimit,
-      verificationGasLimit: gasEstimate.verificationGasLimit,
-      preVerificationGas: gasEstimate.preVerificationGas,
+      callGasLimit: paymasterData.callGasLimit,
+      verificationGasLimit: paymasterData.verificationGasLimit,
+      preVerificationGas: paymasterData.preVerificationGas,
+      paymasterVerificationGasLimit: paymasterData.paymasterVerificationGasLimit,
+      paymasterPostOpGasLimit: paymasterData.paymasterPostOpGasLimit,
       paymasterAndData: paymasterData.paymasterAndData,
     };
 

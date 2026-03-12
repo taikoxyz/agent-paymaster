@@ -60,6 +60,9 @@ export interface PaymasterRpcResult {
   paymaster: Address;
   paymasterData: HexString;
   paymasterAndData: HexString;
+  callGasLimit: HexString;
+  verificationGasLimit: HexString;
+  preVerificationGas: HexString;
   paymasterVerificationGasLimit: HexString;
   paymasterPostOpGasLimit: HexString;
   quoteId: string;
@@ -88,6 +91,9 @@ export interface QuoteResponse {
   paymaster: Address;
   paymasterData: HexString;
   paymasterAndData: HexString;
+  callGasLimit: HexString;
+  verificationGasLimit: HexString;
+  preVerificationGas: HexString;
   paymasterVerificationGasLimit: HexString;
   paymasterPostOpGasLimit: HexString;
   estimatedGasLimit: HexString;

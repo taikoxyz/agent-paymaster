@@ -73,7 +73,7 @@ export const openApiDocument = {
     },
     "/v1/paymaster/quote": {
       post: {
-        summary: "Estimate gas and return paymaster quote in USDC",
+        summary: "Estimate gas and return a signed USDC paymaster quote",
         requestBody: {
           required: true,
           content: {
@@ -95,7 +95,7 @@ export const openApiDocument = {
         },
         responses: {
           "200": {
-            description: "Paymaster quote",
+            description: "Paymaster quote with bound gas fields and signed sponsorship terms",
           },
           "400": {
             description: "Validation or estimation error",
