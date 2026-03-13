@@ -175,6 +175,7 @@ The release workflow lives in `.github/workflows/release.yml`. It is intentional
 5. Wait for Railway `/health`, then smoke test `/status`, `/rpc`, and `/v1/paymaster/quote`.
 6. Deploy `packages/web` to Vercel production, wait for the public production URL, and smoke test the live site over anonymous HTTP.
 7. Create or update the GitHub Release using the matching changelog section.
+8. Opt GitHub JavaScript actions into Node 24 and use the current official action majors so release runs stay ahead of the June 2026 runner default.
 
 Required GitHub repository variables:
 

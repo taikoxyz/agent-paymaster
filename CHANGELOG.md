@@ -30,6 +30,12 @@ Format:
 
 - None yet.
 
+## [v0.1.4] - 2026-03-13
+
+### Fixed
+
+- Upgraded the release workflow to `actions/checkout@v6` and `actions/setup-node@v6`, and opted GitHub JavaScript actions into Node 24 to clear the hosted-run deprecation warning before the June 2026 runner switch.
+
 ## [v0.1.3] - 2026-03-13
 
 ### Fixed
@@ -80,7 +86,8 @@ Format:
 
 - Documented the release contract, required GitHub Actions variables and secrets, and the Railway plus Vercel deployment flow in `README.md` and `Agents.md`.
 
-[Unreleased]: https://github.com/ggonzalez94/agent-paymaster/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/ggonzalez94/agent-paymaster/compare/v0.1.4...HEAD
+[v0.1.4]: https://github.com/ggonzalez94/agent-paymaster/releases/tag/v0.1.4
 [v0.1.3]: https://github.com/ggonzalez94/agent-paymaster/releases/tag/v0.1.3
 [v0.1.2]: https://github.com/ggonzalez94/agent-paymaster/releases/tag/v0.1.2
 [v0.1.1]: https://github.com/ggonzalez94/agent-paymaster/releases/tag/v0.1.1

@@ -106,6 +106,7 @@ Workflow behavior:
 - Waits for API `/health`, then smoke tests `/status`, `/rpc`, and `/v1/paymaster/quote`.
 - Deploys `packages/web` to Vercel production, waits for the public production URL, and smoke tests the live site over anonymous HTTP.
 - Creates or updates the GitHub Release from the matching `CHANGELOG.md` section.
+- Opts GitHub JavaScript actions into Node 24 and uses the current official action majors so release runs stay ahead of the June 2026 runner default.
 
 Required GitHub Actions variables:
 
