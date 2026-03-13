@@ -107,6 +107,7 @@ Common release helpers:
 pnpm release:validate-version vX.Y.Z
 pnpm release:notes vX.Y.Z
 SMOKE_API_BASE_URL=https://api.example.com pnpm smoke:deploy
+SMOKE_WEB_URL=https://servo.example.com pnpm smoke:deploy
 ```
 
 Local verification:
@@ -172,7 +173,7 @@ The release workflow lives in `.github/workflows/release.yml`. It is intentional
 3. Re-run lint, format, tests, build, contract tests, and both Docker builds.
 4. Deploy `railway.bundler.json` to the Railway bundler service, then `railway.api.json` to the Railway API service.
 5. Wait for Railway `/health`, then smoke test `/status`, `/rpc`, and `/v1/paymaster/quote`.
-6. Deploy `packages/web` to Vercel production and smoke test the protected deployment with `vercel curl`.
+6. Deploy `packages/web` to Vercel production, wait for the public production URL, and smoke test the live site over anonymous HTTP.
 7. Create or update the GitHub Release using the matching changelog section.
 
 Required GitHub repository variables:
@@ -184,11 +185,14 @@ Required GitHub repository variables:
 - `RAILWAY_API_BASE_URL`
 - `VERCEL_ORG_ID`
 - `VERCEL_PROJECT_ID`
+- `VERCEL_PRODUCTION_URL`
 
 Required GitHub repository secrets:
 
 - `RAILWAY_API_TOKEN`
 - `VERCEL_TOKEN`
+
+Vercel production should use standard deployment protection (`prod_deployment_urls_and_all_previews`) so preview deployments stay protected while `VERCEL_PRODUCTION_URL` remains publicly reachable.
 
 ## Networks
 

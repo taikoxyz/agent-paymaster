@@ -75,9 +75,6 @@ jobs:
       name: production
       url: ${{ vars.RAILWAY_API_BASE_URL }}
 
-    outputs:
-      web_deployment_url: ${{ steps.deploy-web.outputs.deployment_url }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -106,6 +103,7 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+          VERCEL_PRODUCTION_URL: ${{ vars.VERCEL_PRODUCTION_URL }}
         run: |
           set -euo pipefail
           missing=()
@@ -119,7 +117,8 @@ jobs:
             RAILWAY_BUNDLER_SERVICE_ID \
             VERCEL_TOKEN \
             VERCEL_ORG_ID \
-            VERCEL_PROJECT_ID
+            VERCEL_PROJECT_ID \
+            VERCEL_PRODUCTION_URL
           do
             if [ -z "${!name:-}" ]; then
               missing+=("$name")
@@ -199,7 +198,6 @@ jobs:
         run: node scripts/deployment-smoke.mjs
 
       - name: Deploy web to Vercel
-        id: deploy-web
         working-directory: packages/web
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
@@ -209,22 +207,42 @@ jobs:
           set -euo pipefail
           pnpm dlx vercel@latest pull --yes --environment=production --token "$VERCEL_TOKEN"
           pnpm dlx vercel@latest build --prod --token "$VERCEL_TOKEN"
-          deployment_url="$(
-            pnpm dlx vercel@latest deploy --prebuilt --prod --token "$VERCEL_TOKEN" \
-              | tail -n 1 \
-              | tr -d '\r'
-          )"
-          echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"
+          deployment_url="$(pnpm dlx vercel@latest deploy --prebuilt --prod --token "$VERCEL_TOKEN" | tail -n 1 | tr -d '\r')"
           echo "Deployed web to $deployment_url"
 
-      - name: Smoke Vercel production deployment
-        working-directory: packages/web
+      - name: Wait for Vercel production URL
         env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_PRODUCTION_URL: ${{ vars.VERCEL_PRODUCTION_URL }}
         run: |
           set -euo pipefail
-          html="$(pnpm dlx vercel@latest curl / --deployment '${{ steps.deploy-web.outputs.deployment_url }}' --token "$VERCEL_TOKEN")"
-          printf '%s' "$html" | grep -q "Servo — The Agent-Native Paymaster"
+          for attempt in {1..20}; do
+            status_code="$(
+              curl \
+                --silent \
+                --show-error \
+                --location \
+                --output /tmp/servo-web.html \
+                --write-out '%{http_code}' \
+                "$VERCEL_PRODUCTION_URL" || true
+            )"
+
+            if [ "$status_code" = "200" ]; then
+              cat /tmp/servo-web.html
+              exit 0
+            fi
+
+            echo "web check attempt $attempt/20 returned status $status_code"
+            sleep 15
+          done
+
+          echo "::error::Vercel production URL did not return 200 after deployment"
+          exit 1
+
+      - name: Smoke public Vercel production URL
+        env:
+          SMOKE_WEB_URL: ${{ vars.VERCEL_PRODUCTION_URL }}
+          SMOKE_WEB_TITLE: Servo — The Agent-Native Paymaster
+        run: node scripts/deployment-smoke.mjs
 
   github-release:
     needs: deploy

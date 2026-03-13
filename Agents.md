@@ -15,7 +15,7 @@ pnpm test             # build workspace packages, then run all TypeScript tests
 pnpm test:contracts   # Solidity tests (Forge)
 pnpm lint             # lint all packages
 pnpm release:notes    # print a tagged CHANGELOG.md section
-pnpm smoke:deploy     # smoke-test a live API deployment
+pnpm smoke:deploy     # smoke-test a live API and/or web deployment
 pnpm format:write     # auto-format
 ```
 
@@ -104,7 +104,7 @@ Workflow behavior:
 - Re-runs lint, format, TypeScript tests, builds, Solidity tests, and both Docker image builds.
 - Deploys the bundler with `railway.bundler.json`, then the API with `railway.api.json`.
 - Waits for API `/health`, then smoke tests `/status`, `/rpc`, and `/v1/paymaster/quote`.
-- Deploys `packages/web` to Vercel production and smoke tests the protected deployment with `vercel curl`.
+- Deploys `packages/web` to Vercel production, waits for the public production URL, and smoke tests the live site over anonymous HTTP.
 - Creates or updates the GitHub Release from the matching `CHANGELOG.md` section.
 
 Required GitHub Actions variables:
@@ -116,11 +116,14 @@ Required GitHub Actions variables:
 - `RAILWAY_API_BASE_URL`
 - `VERCEL_ORG_ID`
 - `VERCEL_PROJECT_ID`
+- `VERCEL_PRODUCTION_URL`
 
 Required GitHub Actions secrets:
 
 - `RAILWAY_API_TOKEN`
 - `VERCEL_TOKEN`
+
+Vercel should use standard deployment protection (`prod_deployment_urls_and_all_previews`) so preview deployments stay protected while the production URL stays public.
 
 ## Conventions
 

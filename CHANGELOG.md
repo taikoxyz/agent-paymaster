@@ -30,6 +30,17 @@ Format:
 
 - None yet.
 
+## [v0.1.3] - 2026-03-13
+
+### Fixed
+
+- Changed the Vercel release smoke test to validate the public production URL instead of only the authenticated deployment URL, and added support for public web smoke checks in `pnpm smoke:deploy`.
+- Removed the stray `packages/web/package-lock.json` so Next.js release builds stop inferring a conflicting workspace root.
+
+### Docs
+
+- Documented the required `VERCEL_PRODUCTION_URL` GitHub Actions variable and the expected Vercel standard deployment protection setting for public releases.
+
 ## [v0.1.2] - 2026-03-13
 
 ### Fixed
@@ -69,7 +80,8 @@ Format:
 
 - Documented the release contract, required GitHub Actions variables and secrets, and the Railway plus Vercel deployment flow in `README.md` and `Agents.md`.
 
-[Unreleased]: https://github.com/ggonzalez94/agent-paymaster/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/ggonzalez94/agent-paymaster/compare/v0.1.3...HEAD
+[v0.1.3]: https://github.com/ggonzalez94/agent-paymaster/releases/tag/v0.1.3
 [v0.1.2]: https://github.com/ggonzalez94/agent-paymaster/releases/tag/v0.1.2
 [v0.1.1]: https://github.com/ggonzalez94/agent-paymaster/releases/tag/v0.1.1
 [v0.1.0]: https://github.com/ggonzalez94/agent-paymaster/releases/tag/v0.1.0

@@ -2,7 +2,7 @@ export const openApiDocument = {
   openapi: "3.1.0",
   info: {
     title: "Agent Paymaster API",
-    version: "0.1.2",
+    version: "0.1.3",
     description:
       "Unified ERC-4337 bundler and paymaster API with zero-config access and USDC gas quoting for Taiko.",
   },
