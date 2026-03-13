@@ -1,17 +1,25 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-contract MockERC20Permit {
+import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
+
+contract MockERC20Permit is EIP712 {
     string public constant name = "Mock USDC";
     string public constant symbol = "mUSDC";
     uint8 public constant decimals = 6;
 
-    mapping(address => uint256) public balanceOf;
-    mapping(address => mapping(address => uint256)) public allowance;
-    mapping(address => uint256) public nonces;
+    bytes32 public constant PERMIT_TYPEHASH =
+        keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)");
+
+    mapping(address account => uint256) public balanceOf;
+    mapping(address owner => mapping(address spender => uint256)) public allowance;
+    mapping(address owner => uint256) public nonces;
 
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
+
+    constructor() EIP712(name, "2") {}
 
     function mint(address to, uint256 amount) external {
         balanceOf[to] += amount;
@@ -42,20 +50,49 @@ contract MockERC20Permit {
         return true;
     }
 
+    function permit(address owner, address spender, uint256 value, uint256 deadline, bytes calldata signature)
+        external
+    {
+        _permit(owner, spender, value, deadline, signature);
+    }
+
     function permit(
         address owner,
         address spender,
         uint256 value,
         uint256 deadline,
-        uint8,
-        bytes32,
-        bytes32
+        uint8 v,
+        bytes32 r,
+        bytes32 s
     ) external {
+        _permit(owner, spender, value, deadline, abi.encodePacked(r, s, v));
+    }
+
+    function permitDigest(address owner, address spender, uint256 value, uint256 nonce, uint256 deadline)
+        external
+        view
+        returns (bytes32)
+    {
+        return _hashPermit(owner, spender, value, nonce, deadline);
+    }
+
+    function _permit(address owner, address spender, uint256 value, uint256 deadline, bytes memory signature) private {
         require(block.timestamp <= deadline, "PERMIT_DEADLINE_EXPIRED");
+
+        bytes32 digest = _hashPermit(owner, spender, value, nonces[owner], deadline);
+        require(SignatureChecker.isValidSignatureNow(owner, digest, signature), "INVALID_PERMIT_SIGNATURE");
 
         nonces[owner] += 1;
         allowance[owner][spender] = value;
         emit Approval(owner, spender, value);
+    }
+
+    function _hashPermit(address owner, address spender, uint256 value, uint256 nonce, uint256 deadline)
+        private
+        view
+        returns (bytes32)
+    {
+        return _hashTypedDataV4(keccak256(abi.encode(PERMIT_TYPEHASH, owner, spender, value, nonce, deadline)));
     }
 
     function _transfer(address from, address to, uint256 amount) private {

@@ -10,7 +10,6 @@ const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
 const HEX_QUANTITY_PATTERN = /^0x[0-9a-fA-F]+$/;
 const HEX_BYTES_PATTERN = /^0x(?:[0-9a-fA-F]{2})*$/;
 const WEI_PER_ETH = 10n ** 18n;
-const ZERO_BYTES32 = `0x${"0".repeat(64)}` as const;
 const QUOTE_ID_LENGTH = 24;
 const UINT128_MAX = (1n << 128n) - 1n;
 const UINT48_MAX = (1n << 48n) - 1n;
@@ -27,7 +26,6 @@ const PAYMASTER_DATA_PARAMETERS = [
       { name: "maxTokenCost", type: "uint256" },
       { name: "validAfter", type: "uint48" },
       { name: "validUntil", type: "uint48" },
-      { name: "quoteNonce", type: "uint256" },
       { name: "postOpOverheadGas", type: "uint32" },
       { name: "surchargeBps", type: "uint16" },
     ],
@@ -42,9 +40,7 @@ const PAYMASTER_DATA_PARAMETERS = [
     components: [
       { name: "value", type: "uint256" },
       { name: "deadline", type: "uint256" },
-      { name: "v", type: "uint8" },
-      { name: "r", type: "bytes32" },
-      { name: "s", type: "bytes32" },
+      { name: "signature", type: "bytes" },
     ],
   },
 ] as const;
@@ -64,7 +60,6 @@ const SPONSORED_USER_OPERATION_TYPES = {
     { name: "maxTokenCost", type: "uint256" },
     { name: "validAfter", type: "uint48" },
     { name: "validUntil", type: "uint48" },
-    { name: "quoteNonce", type: "uint256" },
     { name: "postOpOverheadGas", type: "uint32" },
     { name: "surchargeBps", type: "uint16" },
     { name: "chainId", type: "uint256" },
@@ -78,7 +73,6 @@ interface QuoteData {
   maxTokenCost: bigint;
   validAfter: number;
   validUntil: number;
-  quoteNonce: bigint;
   postOpOverheadGas: number;
   surchargeBps: number;
 }
@@ -86,9 +80,7 @@ interface QuoteData {
 interface PermitData {
   value: bigint;
   deadline: bigint;
-  v: number;
-  r: `0x${string}`;
-  s: `0x${string}`;
+  signature: `0x${string}`;
 }
 
 interface SponsoredUserOperationMessage {
@@ -105,7 +97,6 @@ interface SponsoredUserOperationMessage {
   maxTokenCost: bigint;
   validAfter: number;
   validUntil: number;
-  quoteNonce: bigint;
   postOpOverheadGas: number;
   surchargeBps: number;
   chainId: bigint;
@@ -115,9 +106,7 @@ interface SponsoredUserOperationMessage {
 const EMPTY_PERMIT: PermitData = {
   value: 0n,
   deadline: 0n,
-  v: 0,
-  r: ZERO_BYTES32,
-  s: ZERO_BYTES32,
+  signature: "0x",
 };
 
 export type ChainName = "taikoMainnet" | "taikoHekla" | "taikoHoodi";
@@ -442,9 +431,6 @@ const packUint128Pair = (
     toUint128Hex(second, secondFieldName),
   ]) as `0x${string}`;
 
-const buildQuoteNonce = (payload: Record<string, unknown>): bigint =>
-  BigInt(`0x${createHash("sha256").update(JSON.stringify(payload)).digest("hex")}`);
-
 export class PaymasterService {
   private readonly bundlerClient: BundlerClient;
   private readonly config: PaymasterServiceConfig;
@@ -606,22 +592,12 @@ export class PaymasterService {
       "maxFeePerGas",
     );
 
-    const quoteNonce = buildQuoteNonce({
-      requestKey: this.buildQuoteRequestKey(input),
-      validAfterSeconds,
-      validUntilSeconds,
-      exchangeRate: exchangeRate.toString(),
-      maxTokenCostMicros: maxTokenCostMicros.toString(),
-      paymasterGasLimits,
-    });
-
     const quoteData: QuoteData = {
       token: tokenAddress as `0x${string}`,
       exchangeRate,
       maxTokenCost: maxTokenCostMicros,
       validAfter: toBoundedNumber(BigInt(validAfterSeconds), UINT48_MAX, "validAfter"),
       validUntil: toBoundedNumber(BigInt(validUntilSeconds), UINT48_MAX, "validUntil"),
-      quoteNonce,
       postOpOverheadGas: toBoundedNumber(
         gas.paymasterPostOpGasLimit,
         UINT32_MAX,
@@ -644,7 +620,6 @@ export class PaymasterService {
       maxTokenCost: quoteData.maxTokenCost,
       validAfter: quoteData.validAfter,
       validUntil: quoteData.validUntil,
-      quoteNonce: quoteData.quoteNonce,
       postOpOverheadGas: quoteData.postOpOverheadGas,
       surchargeBps: quoteData.surchargeBps,
       chainId: BigInt(parsed.chain.chainId),
@@ -654,7 +629,7 @@ export class PaymasterService {
     const quoteSignature = await this.quoteSigner.signTypedData({
       domain: {
         name: "TaikoUsdcPaymaster",
-        version: "2",
+        version: "3",
         chainId: BigInt(parsed.chain.chainId),
         verifyingContract: this.config.paymasterAddress as `0x${string}`,
       },

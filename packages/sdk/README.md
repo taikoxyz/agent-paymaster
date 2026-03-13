@@ -55,15 +55,11 @@ const finalUserOp = new UserOperationBuilder({
   callGasLimit: gas.callGasLimit,
   verificationGasLimit: gas.verificationGasLimit,
   preVerificationGas: gas.preVerificationGas,
-})
-  .withPaymasterQuote(quote)
-  .build();
-
-const userOpHash = await client.ethSendUserOperation(finalUserOp, entryPoint);
+});
 
 const permit = await createPermitSignature(
   {
-    owner: finalUserOp.sender,
+    owner: userOp.sender,
     spender: quote.paymaster,
     tokenAddress: quote.tokenAddress,
     chainId: quote.chainId,
@@ -77,7 +73,13 @@ const permit = await createPermitSignature(
   },
 );
 
-console.log({ userOpHash, permit });
+const finalUserOp = finalUserOpDraft
+  .withPaymasterQuoteAndPermit(quote, permit)
+  .build();
+
+const userOpHash = await client.ethSendUserOperation(finalUserOp, entryPoint);
+
+console.log({ userOpHash });
 ```
 
 ## Features
@@ -88,6 +90,6 @@ console.log({ userOpHash, permit });
   - `pm_getPaymasterData`
   - `pm_getPaymasterStubData`
 - Quote helper for `POST /v1/paymaster/quote`
-- EIP-2612 USDC permit typed-data + signature parsing helpers
-- UserOperation builder utilities for paymaster integration
+- EIP-2612-compatible USDC permit typed-data helpers for EOA and ERC-1271 signatures
+- UserOperation builder utilities that can bundle the permit directly into the paymaster quote
 - Typed transport, JSON-RPC, and rate-limit error classes

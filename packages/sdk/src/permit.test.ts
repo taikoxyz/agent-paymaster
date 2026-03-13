@@ -34,15 +34,17 @@ describe("permit helpers", () => {
         chainId: 167000,
       },
       async () =>
-        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb1b",
+        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     );
 
-    expect(result.v).toBe(27);
-    expect(result.r).toBe("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-    expect(result.s).toBe("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    expect(result.signature).toBe(
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    expect(result.value).toBe(1_000_000n);
+    expect(result.deadline).toBe(1_900_000_000n);
   });
 
-  it("rejects EIP-155 chain-encoded v values", async () => {
+  it("rejects empty signatures", async () => {
     await expect(
       createPermitSignature(
         {
@@ -54,8 +56,7 @@ describe("permit helpers", () => {
           tokenAddress: "0x07d83526730c7438048d55a4fc0b850e2aab6f0b",
           chainId: 167000,
         },
-        async () =>
-          "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb25",
+        async () => "0x",
       ),
     ).rejects.toBeInstanceOf(AgentPaymasterSdkError);
   });

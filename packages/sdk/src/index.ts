@@ -1,5 +1,9 @@
 export { AgentPaymasterClient, isJsonRpcResponse } from "./client.js";
 export {
+  applyPermitToPaymasterQuote,
+  type BundledPermitData,
+} from "./paymaster-data.js";
+export {
   AgentPaymasterSdkError,
   HttpRequestError,
   JsonRpcRequestError,

@@ -1,4 +1,8 @@
 import { AgentPaymasterSdkError } from "./errors.js";
+import {
+  applyPermitToPaymasterQuote,
+  type BundledPermitData,
+} from "./paymaster-data.js";
 import type {
   Address,
   BuildUserOperationInput,
@@ -180,6 +184,13 @@ export class UserOperationBuilder {
     };
 
     return this;
+  }
+
+  withPaymasterQuoteAndPermit(
+    quote: QuoteResponse | PaymasterRpcResult,
+    permit: BundledPermitData,
+  ): this {
+    return this.withPaymasterQuote(applyPermitToPaymasterQuote(quote, permit));
   }
 
   withPaymasterData(input: PaymasterDataInput): this {

@@ -2,7 +2,7 @@ import type { Address, HexString } from "./types.js";
 import { AgentPaymasterSdkError } from "./errors.js";
 
 const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
-const SIGNATURE_PATTERN = /^0x[a-fA-F0-9]{130}$/;
+const HEX_BYTES_PATTERN = /^0x(?:[a-fA-F0-9]{2})*$/;
 
 const PERMIT_TYPE = [
   { name: "owner", type: "address" },
@@ -51,9 +51,8 @@ export interface BuildPermitRequest {
 export interface PermitSignature {
   typedData: PermitTypedData;
   signature: HexString;
-  v: number;
-  r: HexString;
-  s: HexString;
+  value: bigint;
+  deadline: bigint;
 }
 
 export type PermitSigner = (typedData: PermitTypedData) => Promise<HexString>;
@@ -106,34 +105,23 @@ export const buildPermitTypedData = (request: BuildPermitRequest): PermitTypedDa
   },
 });
 
-const splitSignature = (signature: HexString): Pick<PermitSignature, "v" | "r" | "s"> => {
-  if (!SIGNATURE_PATTERN.test(signature)) {
+const normalizeHexBytes = (
+  value: string,
+  fieldName: string,
+  { allowEmpty = true }: { allowEmpty?: boolean } = {},
+): HexString => {
+  if (!HEX_BYTES_PATTERN.test(value)) {
     throw new AgentPaymasterSdkError(
-      "invalid_signature",
-      "Permit signer must return a 65-byte hex signature",
+      "invalid_hex",
+      `${fieldName} must be a hex string`,
     );
   }
 
-  const r = `0x${signature.slice(2, 66)}` as HexString;
-  const s = `0x${signature.slice(66, 130)}` as HexString;
-  const vRaw = Number.parseInt(signature.slice(130, 132), 16);
-  if (vRaw >= 35) {
-    throw new AgentPaymasterSdkError(
-      "invalid_signature",
-      "Permit signature includes EIP-155 chain-encoded v. Use an unencoded 27/28 (or 0/1) signature.",
-    );
+  if (!allowEmpty && value === "0x") {
+    throw new AgentPaymasterSdkError("invalid_signature", `${fieldName} cannot be empty`);
   }
 
-  if (vRaw !== 0 && vRaw !== 1 && vRaw !== 27 && vRaw !== 28) {
-    throw new AgentPaymasterSdkError(
-      "invalid_signature",
-      "Permit signature v must be 27/28 (or 0/1).",
-    );
-  }
-
-  const v = vRaw >= 27 ? vRaw : vRaw + 27;
-
-  return { v, r, s };
+  return value.toLowerCase() as HexString;
 };
 
 export const createPermitSignature = async (
@@ -143,10 +131,13 @@ export const createPermitSignature = async (
   const typedData = buildPermitTypedData(request);
 
   const signature = await signer(typedData);
+  const value = BigInt(typedData.message.value);
+  const deadline = BigInt(typedData.message.deadline);
 
   return {
     typedData,
-    signature,
-    ...splitSignature(signature),
+    signature: normalizeHexBytes(signature, "signature", { allowEmpty: false }),
+    value,
+    deadline,
   };
 };
