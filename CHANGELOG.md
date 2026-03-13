@@ -30,6 +30,12 @@ Format:
 
 - None yet.
 
+## [v0.1.2] - 2026-03-13
+
+### Fixed
+
+- Limited the Railway bundler image build to the `shared` and `bundler` workspaces so the release deploy no longer depends on SDK-only package links inside the container build stage.
+
 ## [v0.1.1] - 2026-03-13
 
 ### Fixed
@@ -63,6 +69,7 @@ Format:
 
 - Documented the release contract, required GitHub Actions variables and secrets, and the Railway plus Vercel deployment flow in `README.md` and `Agents.md`.
 
-[Unreleased]: https://github.com/ggonzalez94/agent-paymaster/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/ggonzalez94/agent-paymaster/compare/v0.1.2...HEAD
+[v0.1.2]: https://github.com/ggonzalez94/agent-paymaster/releases/tag/v0.1.2
 [v0.1.1]: https://github.com/ggonzalez94/agent-paymaster/releases/tag/v0.1.1
 [v0.1.0]: https://github.com/ggonzalez94/agent-paymaster/releases/tag/v0.1.0
