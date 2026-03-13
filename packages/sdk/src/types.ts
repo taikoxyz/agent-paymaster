@@ -1,60 +1,7 @@
 export type HexString = `0x${string}`;
 export type Address = `0x${string}`;
-export type JsonRpcId = string | number | null;
 
 export type ChainName = "taikoMainnet" | "taikoHekla" | "taikoHoodi";
-
-export interface UserOperation {
-  sender: Address;
-  nonce: HexString;
-  initCode: HexString;
-  callData: HexString;
-  callGasLimit?: HexString;
-  verificationGasLimit?: HexString;
-  preVerificationGas?: HexString;
-  paymasterVerificationGasLimit?: HexString;
-  paymasterPostOpGasLimit?: HexString;
-  maxFeePerGas: HexString;
-  maxPriorityFeePerGas: HexString;
-  paymasterAndData?: HexString;
-  signature: HexString;
-  l1DataGas?: HexString;
-}
-
-export interface UserOperationGasEstimate {
-  callGasLimit: HexString;
-  verificationGasLimit: HexString;
-  preVerificationGas: HexString;
-  paymasterVerificationGasLimit: HexString;
-  paymasterPostOpGasLimit: HexString;
-}
-
-export interface JsonRpcRequest {
-  jsonrpc: "2.0";
-  id: JsonRpcId;
-  method: string;
-  params?: unknown;
-}
-
-export interface JsonRpcErrorObject {
-  code: number;
-  message: string;
-  data?: unknown;
-}
-
-export interface JsonRpcSuccess<T = unknown> {
-  jsonrpc: "2.0";
-  id: JsonRpcId;
-  result: T;
-}
-
-export interface JsonRpcFailure {
-  jsonrpc: "2.0";
-  id: JsonRpcId;
-  error: JsonRpcErrorObject;
-}
-
-export type JsonRpcResponse<T = unknown> = JsonRpcSuccess<T> | JsonRpcFailure;
 
 export interface QuoteRequest {
   sender?: Address;
@@ -62,7 +9,7 @@ export interface QuoteRequest {
   chainId?: number;
   entryPoint: Address;
   token?: "USDC";
-  userOperation: UserOperation;
+  userOperation: Record<string, unknown>;
 }
 
 export interface QuoteResponse {
@@ -118,11 +65,9 @@ export interface RateLimitErrorPayload {
   resetAt: number;
 }
 
-export interface TransportConfig {
+export interface ServoClientConfig {
   apiUrl: string;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
   headers?: Record<string, string>;
 }
-
-export type ServoClientConfig = TransportConfig;

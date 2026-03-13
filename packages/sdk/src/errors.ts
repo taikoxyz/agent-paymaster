@@ -1,19 +1,12 @@
-import type { JsonRpcErrorObject, RateLimitErrorPayload } from "./types.js";
+import type { RateLimitErrorPayload } from "./types.js";
 
-export class AgentPaymasterSdkError extends Error {
+export class ServoError extends Error {
   readonly code: string;
 
   constructor(code: string, message: string, cause?: unknown) {
     super(message, cause === undefined ? undefined : { cause });
-    this.name = "AgentPaymasterSdkError";
-    this.code = code;
-  }
-}
-
-export class ServoError extends AgentPaymasterSdkError {
-  constructor(code: string, message: string, cause?: unknown) {
-    super(code, message, cause);
     this.name = "ServoError";
+    this.code = code;
   }
 }
 
@@ -45,20 +38,6 @@ export class RateLimitError extends HttpRequestError {
     this.name = "RateLimitError";
     this.limit = rate.limit;
     this.resetAt = rate.resetAt;
-  }
-}
-
-export class JsonRpcRequestError extends AgentPaymasterSdkError {
-  readonly rpcCode: number;
-  readonly rpcData: unknown;
-  readonly status: number;
-
-  constructor(status: number, error: JsonRpcErrorObject) {
-    super("jsonrpc_error", error.message);
-    this.name = "JsonRpcRequestError";
-    this.rpcCode = error.code;
-    this.rpcData = error.data;
-    this.status = status;
   }
 }
 

@@ -68,7 +68,7 @@ const normalizeAddress = (value: string, fieldName: string): Address => {
   if (!ADDRESS_PATTERN.test(value)) {
     throw new ServoError("invalid_address", `${fieldName} must be a valid address`);
   }
-  return value as Address;
+  return value.toLowerCase() as Address;
 };
 
 const normalizeHexBytes = (
@@ -98,7 +98,7 @@ const packPaymasterAndData = (
   postOpGasLimit: bigint,
   paymasterData: HexString,
 ): HexString =>
-  `${normalizeAddress(paymaster, "paymaster").toLowerCase()}${toUint128Hex(
+  `${normalizeAddress(paymaster, "paymaster")}${toUint128Hex(
     verificationGasLimit,
     "paymasterVerificationGasLimit",
   )}${toUint128Hex(postOpGasLimit, "paymasterPostOpGasLimit")}${normalizeHexBytes(
@@ -153,10 +153,7 @@ export const applyPermitToPaymasterQuote = <TQuote extends QuoteResponse | Payma
     paymasterData,
   ) as [DecodedQuoteData, HexString, DecodedPermitData];
 
-  if (
-    normalizeAddress(quoteData.token, "quoteData.token").toLowerCase() !==
-    quote.tokenAddress.toLowerCase()
-  ) {
+  if (normalizeAddress(quoteData.token, "quoteData.token") !== quote.tokenAddress.toLowerCase()) {
     throw new ServoError(
       "invalid_paymaster_data",
       "Quote token in paymasterData does not match quote.tokenAddress",
