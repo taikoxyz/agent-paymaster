@@ -77,6 +77,8 @@ EntryPoint reimburses the bundler in ETH for gas spent
 | `@agent-paymaster/paymaster-contracts` | TaikoUsdcPaymaster Solidity contract (Foundry)                |
 | `@agent-paymaster/web`                 | Next.js landing page                                          |
 
+The monorepo root `eslint.config.mjs` includes `@next/eslint-plugin-next` for `packages/web`, so `pnpm --filter @agent-paymaster/web lint` runs the standard ESLint CLI instead of deprecated `next lint`.
+
 ## Requirements
 
 - Node.js 22+

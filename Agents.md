@@ -130,6 +130,7 @@ Vercel should use standard deployment protection (`prod_deployment_urls_and_all_
 
 - **Formatting**: Biome or project formatter — always run `pnpm format:write` before committing
 - **Lint**: `pnpm lint` must pass. CI checks both lint and format
+- **Web linting**: the monorepo root `eslint.config.mjs` applies `@next/eslint-plugin-next` to `packages/web`; run it through `pnpm --filter @agent-paymaster/web lint`
 - **Tests**: co-located with source (`*.test.ts`). Every new module needs tests
 - **Imports**: use workspace aliases (`@agent-paymaster/shared`, etc.)
 - **Logging**: structured JSON with `requestId`, `method`, `path`, `status`, `duration`
