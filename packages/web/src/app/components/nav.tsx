@@ -3,7 +3,7 @@ export function Nav() {
     <nav className="fixed top-0 z-50 w-full border-b border-surface-200/50 bg-surface-0/80 backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
         <a href="#" className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-servo-500">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-taiko-300">
             <svg
               width="18"
               height="18"
@@ -42,9 +42,9 @@ export function Nav() {
           </a>
           <a
             href="#integrate"
-            className="rounded-lg bg-servo-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-servo-600"
+            className="rounded-lg bg-taiko-300 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-taiko-400"
           >
-            Get started
+            Use with your agent
           </a>
         </div>
       </div>

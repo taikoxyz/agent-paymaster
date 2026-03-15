@@ -3,17 +3,17 @@ export function Hero() {
     <section className="relative overflow-hidden pt-32 pb-20 md:pt-44 md:pb-32">
       {/* Gradient background */}
       <div className="pointer-events-none absolute inset-0">
-        <div className="absolute top-0 left-1/2 h-[600px] w-[900px] -translate-x-1/2 rounded-full bg-servo-500/8 blur-3xl" />
-        <div className="absolute top-40 left-1/4 h-[300px] w-[400px] rounded-full bg-servo-400/5 blur-3xl" />
+        <div className="absolute top-0 left-1/2 h-[600px] w-[900px] -translate-x-1/2 rounded-full bg-taiko-300/6 blur-3xl" />
+        <div className="absolute top-40 left-1/4 h-[300px] w-[400px] rounded-full bg-taiko-200/4 blur-3xl" />
       </div>
 
       <div className="relative mx-auto max-w-6xl px-6">
         {/* Badge */}
         <div className="mb-8 flex justify-center">
-          <div className="inline-flex items-center gap-2 rounded-full border border-servo-500/20 bg-servo-500/10 px-4 py-1.5">
-            <div className="h-1.5 w-1.5 rounded-full bg-servo-400 animate-pulse" />
-            <span className="text-xs font-medium tracking-wide text-servo-400">
-              First paymaster on Taiko Alethia
+          <div className="inline-flex items-center gap-2 rounded-full border border-taiko-300/20 bg-taiko-300/10 px-4 py-1.5">
+            <div className="h-1.5 w-1.5 rounded-full bg-taiko-300 animate-pulse" />
+            <span className="text-xs font-medium tracking-wide text-taiko-200">
+              Live on Taiko Alethia
             </span>
           </div>
         </div>
@@ -22,7 +22,7 @@ export function Hero() {
         <h1 className="mx-auto max-w-3xl text-center text-4xl font-extrabold leading-[1.1] tracking-tight text-surface-900 sm:text-5xl md:text-6xl">
           Pay gas in USDC.
           <br />
-          <span className="bg-gradient-to-r from-servo-400 to-servo-600 bg-clip-text text-transparent">
+          <span className="bg-gradient-to-r from-taiko-200 to-taiko-300 bg-clip-text text-transparent">
             Zero native tokens.
           </span>
         </h1>
@@ -37,9 +37,9 @@ export function Hero() {
         <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
           <a
             href="#integrate"
-            className="group inline-flex items-center gap-2 rounded-xl bg-servo-500 px-7 py-3.5 text-sm font-semibold text-white shadow-lg shadow-servo-500/25 transition-all hover:bg-servo-600 hover:shadow-servo-500/40"
+            className="group inline-flex items-center gap-2 rounded-xl bg-taiko-300 px-7 py-3.5 text-sm font-semibold text-white shadow-lg shadow-taiko-300/25 transition-all hover:bg-taiko-400 hover:shadow-taiko-300/40"
           >
-            Start building
+            Use with your agent
             <svg
               width="16"
               height="16"

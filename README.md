@@ -6,7 +6,6 @@ Traditional ERC-4337 paymasters require upfront registration, API keys, or manua
 
 [Landing page](https://web-ggonzalez94s-projects.vercel.app) · [API status](https://api-production-cdfe.up.railway.app/status) · [OpenAPI spec](docs/api-openapi.yaml)
 
-
 ## Use it with your agent
 
 Point your agent at the production RPC endpoint and let it transact with USDC only:

@@ -12,8 +12,8 @@ export function Pricing() {
         </div>
 
         <div className="mx-auto mt-16 max-w-lg">
-          <div className="relative rounded-2xl border border-servo-500/30 bg-surface-50 p-8 shadow-lg shadow-servo-500/5">
-            <div className="text-sm font-semibold uppercase tracking-wider text-servo-400">
+          <div className="relative rounded-2xl border border-taiko-300/30 bg-surface-50 p-8 shadow-lg shadow-taiko-300/5">
+            <div className="text-sm font-semibold uppercase tracking-wider text-taiko-200">
               Pay-per-use
             </div>
             <div className="mt-4 flex items-baseline gap-1">
@@ -21,8 +21,8 @@ export function Pricing() {
               <span className="text-surface-500">gas surcharge</span>
             </div>
             <p className="mt-4 text-sm text-surface-500">
-              Every UserOp is priced in USDC and settled on-chain. No invoices, no billing cycles, no
-              API keys.
+              Every UserOp is priced in USDC and settled on-chain. No invoices, no billing cycles,
+              no API keys.
             </p>
             <ul className="mt-8 space-y-3">
               {[
@@ -40,7 +40,7 @@ export function Pricing() {
                     fill="none"
                     stroke="currentColor"
                     strokeWidth="2"
-                    className="shrink-0 text-servo-400"
+                    className="shrink-0 text-taiko-200"
                   >
                     <polyline points="20 6 9 17 4 12" />
                   </svg>
@@ -50,9 +50,9 @@ export function Pricing() {
             </ul>
             <a
               href="#integrate"
-              className="mt-8 block rounded-xl bg-servo-500 py-3 text-center text-sm font-semibold text-white transition-all hover:bg-servo-600"
+              className="mt-8 block rounded-xl bg-taiko-300 py-3 text-center text-sm font-semibold text-white transition-all hover:bg-taiko-400"
             >
-              Get started
+              Use with your agent
             </a>
           </div>
         </div>

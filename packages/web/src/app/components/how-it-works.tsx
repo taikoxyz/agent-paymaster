@@ -82,10 +82,10 @@ export function HowItWorks() {
           {steps.map((step) => (
             <div
               key={step.number}
-              className="group relative rounded-2xl border border-surface-200 bg-surface-50 p-8 transition-all hover:border-servo-500/30 hover:bg-surface-100"
+              className="group relative rounded-2xl border border-surface-200 bg-surface-50 p-8 transition-all hover:border-taiko-300/30 hover:bg-surface-100"
             >
               <div className="mb-6 flex items-center justify-between">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-servo-500/10 text-servo-400 transition-colors group-hover:bg-servo-500/15">
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-taiko-300/10 text-taiko-200 transition-colors group-hover:bg-taiko-300/15">
                   {step.icon}
                 </div>
                 <span className="text-sm font-bold text-surface-300">{step.number}</span>

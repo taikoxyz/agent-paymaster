@@ -5,8 +5,8 @@ export function Cta() {
         <div className="relative overflow-hidden rounded-3xl border border-surface-200 bg-surface-50">
           {/* Gradient */}
           <div className="pointer-events-none absolute inset-0">
-            <div className="absolute -top-20 -right-20 h-[400px] w-[400px] rounded-full bg-servo-500/10 blur-3xl" />
-            <div className="absolute -bottom-20 -left-20 h-[300px] w-[300px] rounded-full bg-servo-400/8 blur-3xl" />
+            <div className="absolute -top-20 -right-20 h-[400px] w-[400px] rounded-full bg-taiko-300/8 blur-3xl" />
+            <div className="absolute -bottom-20 -left-20 h-[300px] w-[300px] rounded-full bg-taiko-200/5 blur-3xl" />
           </div>
 
           <div className="relative px-8 py-16 text-center md:px-16 md:py-24">
@@ -14,15 +14,15 @@ export function Cta() {
               Ready to build on Taiko?
             </h2>
             <p className="mx-auto mt-4 max-w-lg text-lg text-surface-500">
-              Start sending UserOperations paid in USDC in minutes. No signup, no API keys — just
-              call the endpoint.
+              Point your agent at the endpoint and let it transact with USDC. No signup, no API keys
+              — just go.
             </p>
             <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
               <a
                 href="#integrate"
-                className="group inline-flex items-center gap-2 rounded-xl bg-servo-500 px-7 py-3.5 text-sm font-semibold text-white shadow-lg shadow-servo-500/25 transition-all hover:bg-servo-600 hover:shadow-servo-500/40"
+                className="group inline-flex items-center gap-2 rounded-xl bg-taiko-300 px-7 py-3.5 text-sm font-semibold text-white shadow-lg shadow-taiko-300/25 transition-all hover:bg-taiko-400 hover:shadow-taiko-300/40"
               >
-                Start integrating
+                Use with your agent
                 <svg
                   width="16"
                   height="16"

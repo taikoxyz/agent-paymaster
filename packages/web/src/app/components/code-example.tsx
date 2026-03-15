@@ -42,8 +42,9 @@ const result = await client.request({
 });
 // result.paymasterData → ready to use`;
 
+const RPC_ENDPOINT = "https://api-production-cdfe.up.railway.app/rpc";
+
 const integrationDetails = [
-  { label: "RPC endpoint", value: "https://servo.taiko.xyz/rpc" },
   { label: "Standard", value: "ERC-7677 (pm_getPaymasterData)" },
   { label: "Chain", value: "Taiko Alethia (167000)" },
   { label: "EntryPoint", value: "0x0000000071727De22E5E9d8BAf0edAc6f37da032" },
@@ -53,44 +54,91 @@ export function CodeExample() {
   return (
     <section id="integrate" className="py-24 md:py-32">
       <div className="mx-auto max-w-6xl px-6">
-        <div className="grid items-center gap-12 lg:grid-cols-2 lg:gap-16">
-          {/* Left: Text */}
-          <div>
-            <h2 className="text-3xl font-bold tracking-tight text-surface-900 md:text-4xl">
-              Dead simple
-              <br />
-              <span className="text-surface-500">to integrate.</span>
-            </h2>
-            <p className="mt-6 text-lg leading-relaxed text-surface-500">
-              Point your agent at{" "}
-              <code className="rounded bg-surface-100 px-1.5 py-0.5 font-mono text-sm text-servo-400">
-                https://servo.taiko.xyz/rpc
-              </code>{" "}
-              and tell it to use Servo as its paymaster when it needs to transact on Taiko. Standard
-              ERC-7677 — no SDK, no proprietary abstractions.
+        {/* Agent-first CTA */}
+        <div className="mx-auto max-w-2xl text-center">
+          <h2 className="text-3xl font-bold tracking-tight text-surface-900 md:text-4xl">
+            One endpoint.
+            <br />
+            <span className="text-surface-500">Give it to your agent.</span>
+          </h2>
+          <p className="mt-6 text-lg leading-relaxed text-surface-500">
+            Tell your AI agent to use this URL as its paymaster when transacting on Taiko. It
+            handles the rest — quoting, permits, submission. Standard{" "}
+            <a
+              href="https://eips.ethereum.org/EIPS/eip-7677"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-taiko-200 hover:text-taiko-100"
+            >
+              ERC-7677
+            </a>
+            , no SDK needed.
+          </p>
+        </div>
+
+        {/* Prominent endpoint */}
+        <div className="mx-auto mt-10 max-w-2xl">
+          <div className="group relative rounded-2xl border border-taiko-300/30 bg-surface-50 p-6 shadow-lg shadow-taiko-300/5">
+            <div className="text-xs font-semibold uppercase tracking-wider text-surface-400">
+              Paymaster RPC endpoint
+            </div>
+            <div className="mt-3 flex items-center gap-3">
+              <code className="flex-1 break-all font-mono text-lg text-surface-900">
+                {RPC_ENDPOINT}
+              </code>
+            </div>
+            <p className="mt-3 text-sm text-surface-400">
+              All paymaster and bundler methods in one place. Your agent only needs USDC — no ETH at
+              any point.
             </p>
+          </div>
+        </div>
+
+        {/* Feature checklist */}
+        <div className="mx-auto mt-8 flex max-w-2xl flex-wrap justify-center gap-x-8 gap-y-3">
+          {[
+            "Works with any ERC-4337 smart account",
+            "Pure viem — no SDK or wrapper",
+            "Agent only needs USDC",
+            "No API keys or signup",
+          ].map((feature) => (
+            <div key={feature} className="flex items-center gap-2">
+              <div className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-taiko-300/15">
+                <svg
+                  width="10"
+                  height="10"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="3"
+                  className="text-taiko-200"
+                >
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              </div>
+              <span className="text-sm text-surface-500">{feature}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Code example */}
+        <div className="mx-auto mt-16 grid max-w-6xl items-start gap-12 lg:grid-cols-2 lg:gap-16">
+          {/* Left: integration details */}
+          <div>
+            <h3 className="text-xl font-semibold text-surface-900">If you want the details</h3>
+            <p className="mt-3 text-sm leading-relaxed text-surface-500">
+              Under the hood it&apos;s standard ERC-7677 JSON-RPC — get a quote, sign a USDC permit,
+              submit. Here&apos;s the full flow with viem.
+            </p>
+
+            {/* Integration details */}
             <div className="mt-8 space-y-4">
-              {[
-                "Standard ERC-7677 — works with any compliant client",
-                "Pure viem — no SDK or wrapper needed",
-                "Works with any ERC-4337 smart account",
-                "Your agent only needs USDC — no ETH at any point",
-              ].map((feature) => (
-                <div key={feature} className="flex items-center gap-3">
-                  <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-servo-500/15">
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="3"
-                      className="text-servo-400"
-                    >
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
+              {integrationDetails.map((detail) => (
+                <div key={detail.label}>
+                  <div className="text-xs font-medium text-surface-400">{detail.label}</div>
+                  <div className="mt-1 font-mono text-sm text-surface-700 break-all">
+                    {detail.value}
                   </div>
-                  <span className="text-sm text-surface-600">{feature}</span>
                 </div>
               ))}
             </div>
@@ -98,7 +146,7 @@ export function CodeExample() {
 
           {/* Right: Code block */}
           <div className="relative">
-            <div className="absolute -inset-4 rounded-3xl bg-servo-500/5 blur-2xl" />
+            <div className="absolute -inset-4 rounded-3xl bg-taiko-300/5 blur-2xl" />
             <div className="relative overflow-hidden rounded-2xl border border-surface-200 bg-surface-50">
               {/* Window chrome */}
               <div className="flex items-center gap-2 border-b border-surface-200 px-4 py-3">
@@ -112,23 +160,6 @@ export function CodeExample() {
                 <code className="font-mono text-surface-600">{codeString}</code>
               </pre>
             </div>
-          </div>
-        </div>
-
-        {/* Integration details */}
-        <div className="mt-16 rounded-2xl border border-surface-200 bg-surface-50 p-6 md:p-8">
-          <h3 className="text-sm font-semibold uppercase tracking-wider text-surface-500">
-            Integration details
-          </h3>
-          <div className="mt-6 grid gap-4 sm:grid-cols-2">
-            {integrationDetails.map((detail) => (
-              <div key={detail.label}>
-                <div className="text-xs font-medium text-surface-400">{detail.label}</div>
-                <div className="mt-1 font-mono text-sm text-surface-700 break-all">
-                  {detail.value}
-                </div>
-              </div>
-            ))}
           </div>
         </div>
       </div>

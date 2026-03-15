@@ -70,7 +70,7 @@ function Cell({ value }: { value: boolean | string }) {
       fill="none"
       stroke="currentColor"
       strokeWidth="2.5"
-      className="text-servo-400"
+      className="text-taiko-200"
     >
       <polyline points="20 6 9 17 4 12" />
     </svg>
@@ -113,7 +113,7 @@ export function Comparison() {
                   <th
                     key={p.name}
                     className={`pb-4 text-center text-sm font-semibold ${
-                      p.highlight ? "text-servo-400" : "text-surface-600"
+                      p.highlight ? "text-taiko-200" : "text-surface-600"
                     }`}
                   >
                     {p.name}

@@ -1,29 +1,24 @@
 @import "tailwindcss";
 
 @theme {
-  --color-servo-50: #f0f7ff;
-  --color-servo-100: #e0efff;
-  --color-servo-200: #b9dfff;
-  --color-servo-300: #7cc5ff;
-  --color-servo-400: #36a9ff;
-  --color-servo-500: #0090ff;
-  --color-servo-600: #0070d6;
-  --color-servo-700: #0058ad;
-  --color-servo-800: #004b8f;
-  --color-servo-900: #003f76;
-  --color-servo-950: #00284e;
+  --color-taiko-50: #ffe7f6;
+  --color-taiko-100: #ffc6e9;
+  --color-taiko-200: #ff6fc8;
+  --color-taiko-300: #e81899;
+  --color-taiko-400: #c8047d;
+  --color-taiko-500: #a00064;
 
-  --color-surface-0: #09090b;
-  --color-surface-50: #111114;
-  --color-surface-100: #18181b;
-  --color-surface-200: #27272a;
-  --color-surface-300: #3f3f46;
-  --color-surface-400: #52525b;
-  --color-surface-500: #71717a;
-  --color-surface-600: #a1a1aa;
-  --color-surface-700: #d4d4d8;
-  --color-surface-800: #e4e4e7;
-  --color-surface-900: #fafafa;
+  --color-surface-0: #050912;
+  --color-surface-50: #0b101b;
+  --color-surface-100: #191e28;
+  --color-surface-200: #2b303b;
+  --color-surface-300: #444a55;
+  --color-surface-400: #5d636f;
+  --color-surface-500: #767c89;
+  --color-surface-600: #91969f;
+  --color-surface-700: #adb1b8;
+  --color-surface-800: #cacbce;
+  --color-surface-900: #f3f3f3;
 
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-jetbrains-mono), "Fira Code", ui-monospace, monospace;
@@ -34,6 +29,6 @@ html {
 }
 
 ::selection {
-  background-color: var(--color-servo-500);
+  background-color: var(--color-taiko-300);
   color: white;
 }

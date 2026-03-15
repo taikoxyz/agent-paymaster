@@ -4,7 +4,7 @@ export function Footer() {
       <div className="mx-auto max-w-6xl px-6">
         <div className="flex flex-col items-center justify-between gap-6 md:flex-row">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-servo-500">
+            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-taiko-300">
               <svg
                 width="14"
                 height="14"
