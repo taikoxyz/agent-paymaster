@@ -62,14 +62,19 @@ export function CodeExample() {
               <span className="text-surface-500">to integrate.</span>
             </h2>
             <p className="mt-6 text-lg leading-relaxed text-surface-500">
-              Standard ERC-7677 paymaster RPC. Use viem directly — get a quote, sign a permit, send
-              it. No SDK, no proprietary abstractions.
+              Point your agent at{" "}
+              <code className="rounded bg-surface-100 px-1.5 py-0.5 font-mono text-sm text-servo-400">
+                https://servo.taiko.xyz/rpc
+              </code>{" "}
+              and tell it to use Servo as its paymaster when it needs to transact on Taiko. Standard
+              ERC-7677 — no SDK, no proprietary abstractions.
             </p>
             <div className="mt-8 space-y-4">
               {[
                 "Standard ERC-7677 — works with any compliant client",
                 "Pure viem — no SDK or wrapper needed",
                 "Works with any ERC-4337 smart account",
+                "Your agent only needs USDC — no ETH at any point",
               ].map((feature) => (
                 <div key={feature} className="flex items-center gap-3">
                   <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-servo-500/15">

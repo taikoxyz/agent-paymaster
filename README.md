@@ -1,130 +1,62 @@
 # Servo — Agent-Native Paymaster for Taiko
 
-ERC-4337 paymaster and bundler that lets agents and dApps pay gas in USDC on Taiko Alethia. No ETH required, no wallet setup, no API keys.
+An ERC-4337 paymaster and bundler that lets AI agents and dApps pay for gas in USDC on [Taiko](https://taiko.xyz). No ETH needed, no wallet setup, no API keys.
 
-Releases are tag-driven. Pushing `vX.Y.Z` runs the release workflow, deploys the API and bundler to Railway, deploys the web app to Vercel, smoke tests the live stack, and then creates or updates the matching GitHub Release from `CHANGELOG.md`.
+Traditional ERC-4337 paymasters require upfront registration, API keys, or manual deposit flows. Servo removes all of that. Any smart account with USDC can submit transactions immediately — the paymaster prices gas in real time via a composite oracle (Chainlink + Coinbase + Kraken) and settles costs atomically on-chain. The agent signs a standard [EIP-2612 permit](https://eips.ethereum.org/EIPS/eip-2612), the paymaster verifies an EIP-712 quote, and settlement happens in a single UserOperation.
+
+[Landing page](https://web-ggonzalez94s-projects.vercel.app) · [API status](https://api-production-cdfe.up.railway.app/status) · [OpenAPI spec](docs/api-openapi.yaml)
+
+
+## Use it with your agent
+
+Point your agent at the production RPC endpoint and let it transact with USDC only:
+
+```
+POST https://api-production-cdfe.up.railway.app/rpc
+```
+
+The flow for an agent is:
+
+1. Create an ERC-4337 smart wallet (e.g. [SimpleAccount](https://github.com/eth-infinitism/account-abstraction))
+2. Fund it with USDC on Taiko
+3. Build a UserOperation and call `pm_getPaymasterStubData` to get a gas estimate
+4. Sign a USDC permit for the quoted cost
+5. Call `pm_getPaymasterData` with the permit to get signed paymaster fields
+6. Submit via `eth_sendUserOperation` — done, no ETH ever touched
+
+All methods go through the single `/rpc` endpoint using standard [ERC-7677](https://eips.ethereum.org/EIPS/eip-7677) JSON-RPC.
 
 ## How it works
 
-Servo implements the standard ERC-4337 paymaster flow. An agent that holds USDC but no ETH can submit transactions on Taiko without ever touching the native gas token.
+The agent holds USDC but no ETH. The entire gas payment happens in USDC through four phases:
 
-```
-Agent (has USDC, no ETH)
-  |
-  1. POST /rpc  { method: "pm_getPaymasterStubData", params: [userOp, entryPoint, chainId, context] }
-  |     returns: stub paymasterData + USDC cost estimate
-  |
-  2. Agent signs an EIP-2612 USDC permit for the cost
-  |
-  3. POST /rpc  { method: "pm_getPaymasterData", params: [userOp, entryPoint, chainId, context with permit] }
-  |
-  v
-Servo API
-  |  calls bundler: eth_estimateUserOperationGas
-  |  prices: gasCost_in_ETH x oracle ETH/USDC price x surcharge
-  |  oracle policy: Chainlink mainnet primary, Coinbase + Kraken fallback, fail-closed on quorum/deviation issues
-  |  surcharge is configurable; 5% is the default reference in this repo
-  |  signs full sponsorship terms with EIP-712 (quote signer key)
-  |  returns: { paymasterData, gas fields }
-  |
-  v
-Agent
-  |  attaches the returned gas fields and paymasterData to the UserOp
-  |  signs the full UserOp
-  |
-  4. POST /rpc  { method: "eth_sendUserOperation", params: [userOp, entryPoint] }
-  |
-  v
-Servo API --> forwards to Bundler
-  |  bundler validates, adds to mempool
-  |  bundler batches UserOps into a bundle transaction
-  |
-  3. Bundler submits bundle TX on-chain (bundler pays ETH gas)
-  |
-  v
-EntryPoint contract (on-chain)
-  |
-  |  for each UserOp in the bundle:
-  |
-  |-- _validatePaymasterUserOp() on TaikoUsdcPaymaster:
-  |     - verifies quote signature against the full sponsorship-relevant UserOp fields
-  |     - uses existing allowance, or executes a USDC permit if one was attached
-  |     - checks agent has enough USDC balance
-  |     - transfers maxTokenCost USDC from agent -> paymaster (pre-fund lock)
-  |     - returns validation data (validAfter/validUntil window)
-  |
-  |-- Executes the agent's actual callData (the thing they wanted to do)
-  |
-  |-- _postOp() on TaikoUsdcPaymaster:
-  |     - calculates actual gas used + signed postOp overhead
-  |     - converts that native cost using the signed exchange rate and signed surcharge
-  |     - if actual < pre-funded: refunds surplus USDC to agent
-  |     - if actual > pre-funded and the op succeeded: pulls additional USDC from agent
-  |     - if the op reverted: caps charges at the pre-funded amount
-  |     - emits UserOperationSponsored event
-  |
-  v
-EntryPoint reimburses the bundler in ETH for gas spent
-```
+**1. Estimate** — The agent calls `pm_getPaymasterStubData` with a draft UserOperation. The API estimates gas via the bundler, converts the ETH cost to USDC using a composite price oracle (Chainlink primary, Coinbase + Kraken fallback), applies a surcharge (default 5%), and returns a USDC cost estimate.
 
-**Why the paymaster holds ETH**: The EntryPoint requires every paymaster to maintain an ETH deposit. When a bundler submits a transaction, it pays gas in ETH upfront. The EntryPoint then reimburses the bundler from the paymaster's deposit. Without this deposit, the EntryPoint rejects the UserOp. The paymaster effectively converts between USDC (what the agent pays) and ETH (what the network charges). In this repo, 5% is the default surcharge reference, but the signed quote is authoritative and the surcharge is configurable.
+**2. Quote** — The agent signs an [EIP-2612 USDC permit](https://eips.ethereum.org/EIPS/eip-2612) for the quoted amount and calls `pm_getPaymasterData` with the permit attached. The API returns EIP-712 signed paymaster fields that the agent attaches to the UserOperation.
+
+**3. Submission** — The agent signs the final UserOperation and submits it via `eth_sendUserOperation`. The bundler validates it, adds it to the mempool, and batches it into an on-chain bundle transaction. The bundler pays ETH gas upfront.
+
+**4. On-chain settlement** — The EntryPoint calls the paymaster contract, which verifies the quote signature, executes the USDC permit, and locks `maxTokenCost` USDC from the agent. After the agent's transaction executes, the contract settles the actual gas cost in USDC and refunds any surplus back to the agent.
+
+> **Why does the paymaster hold ETH?** The EntryPoint requires paymasters to maintain an ETH deposit to reimburse bundlers for gas. The paymaster converts between USDC (what agents pay) and ETH (what the network charges).
 
 ## Packages
 
 | Package                                | Description                                                   |
 | -------------------------------------- | ------------------------------------------------------------- |
-| `@agent-paymaster/api`                 | Hono API service (quotes, RPC gateway, rate limiting)         |
-| `@agent-paymaster/bundler`             | ERC-4337 bundler (gas estimation, mempool, bundle submission) |
-| `@agent-paymaster/shared`              | Shared types and helpers                                      |
-| `@agent-paymaster/paymaster-contracts` | TaikoUsdcPaymaster Solidity contract (Foundry)                |
+| `@agent-paymaster/api`                 | Hono API — quotes, RPC gateway, rate limiting                 |
+| `@agent-paymaster/bundler`             | ERC-4337 bundler — gas estimation, mempool, bundle submission |
+| `@agent-paymaster/shared`              | Shared types and EIP-712 helpers                              |
+| `@agent-paymaster/paymaster-contracts` | TaikoUsdcPaymaster (Solidity / Foundry)                       |
 | `@agent-paymaster/web`                 | Next.js landing page                                          |
-
-The monorepo root `eslint.config.mjs` includes `@next/eslint-plugin-next` for `packages/web`, so `pnpm --filter @agent-paymaster/web lint` runs the standard ESLint CLI instead of deprecated `next lint`.
-
-## Requirements
-
-- Node.js 22+
-- pnpm 10+
-- Foundry (for contract development)
 
 ## Quick start
 
 ```bash
-cp .env.example .env
+cp .env.example .env    # fill in required vars
 pnpm install
-pnpm check
+pnpm check              # lint + format + build + test
 ```
-
-Cut a release:
-
-```bash
-# 1. Update package.json, packages/api/src/openapi.ts, and docs/api-openapi.yaml
-# 2. Add a matching section to CHANGELOG.md
-git commit -am "chore(release): cut vX.Y.Z"
-git tag vX.Y.Z
-git push origin main --follow-tags
-```
-
-Common release helpers:
-
-```bash
-pnpm release:validate-version vX.Y.Z
-pnpm release:notes vX.Y.Z
-SMOKE_API_BASE_URL=https://api.example.com pnpm smoke:deploy
-SMOKE_WEB_URL=https://servo.example.com pnpm smoke:deploy
-```
-
-Local verification:
-
-```bash
-pnpm lint
-pnpm format
-pnpm test
-pnpm build
-pnpm test:contracts
-```
-
-`pnpm test` builds the workspace packages first so a fresh clone exercises the same module resolution path as GitHub Actions.
 
 Run services locally:
 
@@ -132,31 +64,30 @@ Run services locally:
 pnpm dev
 ```
 
-## API endpoints
+## API
 
-`@agent-paymaster/api` exposes:
+All paymaster and bundler methods go through a single JSON-RPC endpoint:
 
-- `POST /rpc`: unified JSON-RPC endpoint (`eth_*` proxied to bundler, `pm_*` handled by paymaster service).
-- `GET /health`: aggregate service health.
-- `GET /status`: runtime dependency/config status.
-- `GET /metrics`: Prometheus metrics.
-- `GET /openapi.json`: OpenAPI document.
+```
+POST /rpc
+```
 
-Static OpenAPI file: `docs/api-openapi.yaml`.
+| Method                     | Description                                    |
+| -------------------------- | ---------------------------------------------- |
+| `pm_getPaymasterStubData`  | Gas estimate + USDC cost quote (stub)          |
+| `pm_getPaymasterData`      | Signed paymaster fields (with optional permit) |
+| `eth_sendUserOperation`    | Submit UserOp (proxied to bundler)             |
+| `eth_supportedEntryPoints` | List supported EntryPoints                     |
+
+Other routes: `GET /health`, `GET /status`, `GET /metrics`, `GET /openapi.json`.
+
+Static OpenAPI spec: [`docs/api-openapi.yaml`](docs/api-openapi.yaml).
 
 ## Contracts
 
-Run contract tests:
-
 ```bash
-pnpm --filter @agent-paymaster/paymaster-contracts test
-```
-
-Deploy paymaster contract:
-
-```bash
+pnpm --filter @agent-paymaster/paymaster-contracts test        # run tests
 pnpm --filter @agent-paymaster/paymaster-contracts deploy:taiko-mainnet
-pnpm --filter @agent-paymaster/paymaster-contracts deploy:taiko-hoodi
 ```
 
 ## Docker
@@ -165,42 +96,63 @@ pnpm --filter @agent-paymaster/paymaster-contracts deploy:taiko-hoodi
 docker compose up --build
 ```
 
-The API uses `Dockerfile` (default CMD: API server on port 3000). The bundler uses `Dockerfile.bundler` (CMD: bundler on port 3001). Both share a persistent volume at `/app/data` for SQLite.
-
-## Releases and deployment
-
-The release workflow lives in `.github/workflows/release.yml`. It is intentionally simple:
-
-1. Validate that the pushed tag matches `package.json`, `packages/api/src/openapi.ts`, and `docs/api-openapi.yaml`.
-2. Validate that `CHANGELOG.md` contains a non-empty `## [vX.Y.Z] - YYYY-MM-DD` section.
-3. Re-run lint, format, tests, build, contract tests, and both Docker builds.
-4. Deploy `railway.bundler.json` to the Railway bundler service, then `railway.api.json` to the Railway API service.
-5. Wait for Railway `/health`, then smoke test `/status`, `/rpc`, and `pm_getPaymasterData`.
-6. Deploy `packages/web` to Vercel production, wait for the public production URL, and smoke test the live site over anonymous HTTP.
-7. Create or update the GitHub Release using the matching changelog section.
-8. Opt GitHub JavaScript actions into Node 24 and use the current official action majors so release runs stay ahead of the June 2026 runner default.
-
-Required GitHub repository variables:
-
-- `RAILWAY_PROJECT_ID`
-- `RAILWAY_ENVIRONMENT_ID`
-- `RAILWAY_API_SERVICE_ID`
-- `RAILWAY_BUNDLER_SERVICE_ID`
-- `RAILWAY_API_BASE_URL`
-- `VERCEL_ORG_ID`
-- `VERCEL_PROJECT_ID`
-- `VERCEL_PRODUCTION_URL`
-
-Required GitHub repository secrets:
-
-- `RAILWAY_API_TOKEN`
-- `VERCEL_TOKEN`
-
-Vercel production should use standard deployment protection (`prod_deployment_urls_and_all_previews`) so preview deployments stay protected while `VERCEL_PRODUCTION_URL` remains publicly reachable.
+Two Dockerfiles: `Dockerfile` (API, port 3000) and `Dockerfile.bundler` (bundler, port 3001). Both share a persistent SQLite volume at `/app/data`.
 
 ## Networks
 
-Configured for:
+| Network                 | Chain ID | Status     |
+| ----------------------- | -------- | ---------- |
+| Taiko Alethia (mainnet) | 167000   | Production |
+| Taiko Hoodi (testnet)   | 167013   | Testnet    |
 
-- `taikoMainnet` (Chain ID: 167000)
-- `taikoHoodi` (Chain ID: 167013)
+## Development
+
+### Requirements
+
+- Node.js 22+
+- pnpm 10+
+- Foundry (for contract development)
+
+### Commands
+
+```bash
+pnpm lint             # lint all packages
+pnpm format:write     # auto-format
+pnpm test             # build + run all TypeScript tests
+pnpm test:contracts   # Solidity tests (Forge)
+pnpm build            # build everything (except contracts)
+pnpm check            # full verification gate
+```
+
+### Releases
+
+Releases are tag-driven via `.github/workflows/release.yml`:
+
+1. Update version in `package.json`, `packages/api/src/openapi.ts`, and `docs/api-openapi.yaml`
+2. Add a `## [vX.Y.Z] - YYYY-MM-DD` section to `CHANGELOG.md`
+3. Commit, tag, and push:
+
+```bash
+git commit -am "chore(release): vX.Y.Z"
+git tag vX.Y.Z
+git push origin main --follow-tags
+```
+
+The workflow validates versions, re-runs CI, deploys API + bundler to Railway, deploys web to Vercel, smoke tests everything, and publishes the GitHub Release.
+
+Release helpers:
+
+```bash
+pnpm release:validate-version vX.Y.Z
+pnpm release:notes vX.Y.Z
+SMOKE_API_BASE_URL=https://api.example.com pnpm smoke:deploy
+```
+
+<details>
+<summary>Required GitHub Actions configuration</summary>
+
+**Variables**: `RAILWAY_PROJECT_ID`, `RAILWAY_ENVIRONMENT_ID`, `RAILWAY_API_SERVICE_ID`, `RAILWAY_BUNDLER_SERVICE_ID`, `RAILWAY_API_BASE_URL`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`, `VERCEL_PRODUCTION_URL`
+
+**Secrets**: `RAILWAY_API_TOKEN`, `VERCEL_TOKEN`
+
+</details>

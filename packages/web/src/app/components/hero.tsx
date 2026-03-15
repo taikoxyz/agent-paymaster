@@ -67,7 +67,7 @@ export function Hero() {
         <div className="mx-auto mt-20 grid max-w-2xl grid-cols-3 gap-8">
           {[
             { value: "5%", label: "Gas surcharge" },
-            { value: "1K", label: "Free ops/month" },
+            { value: "0", label: "Signup required" },
             { value: "0 ETH", label: "Required" },
           ].map((stat) => (
             <div key={stat.label} className="text-center">
