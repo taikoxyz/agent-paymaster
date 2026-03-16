@@ -1303,8 +1303,12 @@ export const createBundlerApp = (
 if (process.env.NODE_ENV !== "test") {
   const persistence = new BundlerPersistenceStore();
   const submitterPrivateKey = process.env.BUNDLER_SUBMITTER_PRIVATE_KEY?.trim();
+  const beneficiaryAddress = process.env.BUNDLER_BENEFICIARY_ADDRESS?.trim();
   if (submitterPrivateKey !== undefined && !PRIVATE_KEY_PATTERN.test(submitterPrivateKey)) {
     throw new Error("BUNDLER_SUBMITTER_PRIVATE_KEY must be a 32-byte hex private key");
+  }
+  if (beneficiaryAddress !== undefined && !ADDRESS_PATTERN.test(beneficiaryAddress)) {
+    throw new Error("BUNDLER_BENEFICIARY_ADDRESS must be a 20-byte hex address");
   }
 
   const submissionEnabled = submitterPrivateKey !== undefined;
@@ -1336,9 +1340,7 @@ if (process.env.NODE_ENV !== "test") {
           1,
         ),
         txTimeoutMs: parsePositiveIntegerWithFallback(process.env.BUNDLER_TX_TIMEOUT_MS, 180_000),
-        beneficiaryAddress: process.env.BUNDLER_BENEFICIARY_ADDRESS?.trim() as
-          | HexString
-          | undefined,
+        beneficiaryAddress: beneficiaryAddress as HexString | undefined,
       })
     : {
         getHealth: () => ({

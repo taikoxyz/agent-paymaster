@@ -1,4 +1,4 @@
-import { createPublicClient, createWalletClient, http, toHex } from "viem";
+import { createPublicClient, createWalletClient, http, isAddress, toHex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 import {
@@ -190,6 +190,7 @@ export class BundlerSubmitter {
   private lastConfirmedAt: number | null = null;
   private lastSubmissionTxHash: HexString | null = null;
   private lastError: string | null = null;
+  private balanceError: string | null = null;
   private recoveryError: string | null = null;
   private submittedTransactions = 0;
   private confirmedTransactions = 0;
@@ -199,6 +200,9 @@ export class BundlerSubmitter {
     config: BundlerSubmitterConfig,
   ) {
     const client = config.client ?? new ViemSubmissionClient(config.chainRpcUrl, config.privateKey);
+    if (config.beneficiaryAddress !== undefined && !isAddress(config.beneficiaryAddress)) {
+      throw new Error("beneficiaryAddress must be a valid hex address");
+    }
 
     this.client = client;
     this.submitterAddress =
@@ -240,7 +244,7 @@ export class BundlerSubmitter {
 
   getHealth(): BundlerSubmitterHealth {
     const inflight = uniqueTransactionCount(this.service.getSubmittingUserOperations());
-    const healthError = this.recoveryError ?? this.lastError;
+    const healthError = this.recoveryError ?? this.lastError ?? this.balanceError;
 
     return {
       enabled: true,
@@ -312,10 +316,11 @@ export class BundlerSubmitter {
   private async refreshBalance(): Promise<void> {
     try {
       this.lastKnownBalance = await this.client.getBalance(this.submitterAddress);
+      this.balanceError = null;
     } catch (error) {
-      this.lastError = extractBundlerErrorReason(error);
+      this.balanceError = extractBundlerErrorReason(error);
       logEvent("warn", "bundler.submitter_balance_check_failed", {
-        error: this.lastError,
+        error: this.balanceError,
       });
     }
   }

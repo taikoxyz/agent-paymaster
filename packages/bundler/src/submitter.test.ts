@@ -36,6 +36,7 @@ class FakeSubmissionClient implements SubmissionClient {
   balance = 10n ** 18n;
   nextTransactionHash =
     "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as HexString;
+  balanceError: Error | null = null;
   simulationError: Error | null = null;
   receiptError: Error | null = null;
   transactionError: Error | null = null;
@@ -91,6 +92,10 @@ class FakeSubmissionClient implements SubmissionClient {
 
   async getBalance(address: HexString): Promise<bigint> {
     void address;
+    if (this.balanceError) {
+      throw this.balanceError;
+    }
+
     return this.balance;
   }
 }
@@ -231,6 +236,48 @@ const makeUserOperationEventLog = (
 });
 
 describe("BundlerSubmitter", () => {
+  it("clears balance health errors after the RPC recovers", async () => {
+    const client = new FakeSubmissionClient();
+    client.balanceError = new Error("balance rpc unavailable");
+
+    const service = new BundlerService({
+      chainId: 167000,
+      entryPoints: [ENTRY_POINT_V08],
+    });
+    const submitter = new BundlerSubmitter(service, {
+      chainRpcUrl: "https://rpc.mainnet.taiko.xyz",
+      privateKey: `0x${"1".repeat(64)}`,
+      client,
+      pollIntervalMs: 10,
+    });
+
+    await submitter.tick();
+    expect(submitter.getHealth().status).toBe("degraded");
+    expect(submitter.getHealth().lastError).toContain("balance rpc unavailable");
+
+    client.balanceError = null;
+    await submitter.tick();
+
+    expect(submitter.getHealth().status).toBe("ok");
+    expect(submitter.getHealth().lastError).toBeUndefined();
+  });
+
+  it("rejects invalid beneficiary addresses at construction time", () => {
+    const service = new BundlerService({
+      chainId: 167000,
+      entryPoints: [ENTRY_POINT_V08],
+    });
+
+    expect(
+      () =>
+        new BundlerSubmitter(service, {
+          chainRpcUrl: "https://rpc.mainnet.taiko.xyz",
+          privateKey: `0x${"1".repeat(64)}`,
+          beneficiaryAddress: "not-an-address" as HexString,
+        }),
+    ).toThrow("beneficiaryAddress must be a valid hex address");
+  });
+
   it("submits a pending user operation and finalizes it from the receipt logs", async () => {
     const client = new FakeSubmissionClient();
     const service = new BundlerService({
