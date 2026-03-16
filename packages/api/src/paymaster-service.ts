@@ -151,7 +151,7 @@ export type PaymasterServiceConfigInput = Omit<
 const OPERATIONAL_DEFAULTS = {
   quoteTtlSeconds: 90,
   surchargeBps: 500,
-  defaultPaymasterVerificationGasLimit: 60_000n,
+  defaultPaymasterVerificationGasLimit: 150_000n,
   defaultPaymasterPostOpGasLimit: 45_000n,
 } as const;
 
@@ -500,8 +500,10 @@ export class PaymasterService {
       );
     }
 
-    const validAfterSeconds = Math.floor(this.nowMs() / 1000);
-    const validUntilSeconds = validAfterSeconds + this.config.quoteTtlSeconds;
+    const VALID_AFTER_GRACE_SECONDS = 30;
+    const nowSeconds = Math.floor(this.nowMs() / 1000);
+    const validAfterSeconds = nowSeconds - VALID_AFTER_GRACE_SECONDS;
+    const validUntilSeconds = nowSeconds + this.config.quoteTtlSeconds;
 
     const accountGasLimits = packUint128Pair(
       gas.verificationGasLimit,

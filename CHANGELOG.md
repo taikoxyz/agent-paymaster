@@ -10,6 +10,14 @@ Format:
 
 ## [Unreleased]
 
+## [v0.2.3] - 2026-03-16
+
+### Fixed
+
+- Quote clock skew: `validAfter` now includes a 30-second backward grace window to tolerate API/chain clock drift.
+- Paymaster verification gas increased from 60K to 150K to prevent OOG during permit attempts and signature verification.
+- On-chain `maxQuoteTtlSeconds` increased from 90 to 150 to accommodate the grace window.
+
 ## [v0.2.2] - 2026-03-16
 
 ### Added

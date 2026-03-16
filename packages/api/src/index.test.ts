@@ -539,7 +539,7 @@ describe("api gateway", () => {
     expect(response.status).toBe(200);
 
     const payload = await response.json();
-    expect(payload.result.paymasterVerificationGasLimit).toBe("0xea60");
+    expect(payload.result.paymasterVerificationGasLimit).toBe("0x249f0");
     expect(payload.result.paymasterPostOpGasLimit).toBe("0xafc8");
   });
 });

@@ -1,8 +1,8 @@
 /**
  * E2E paymaster test: send 0.01 USDC to gustavog.eth via Servo API.
  * Uses an already-deployed Permit4337Account with USDC balance.
- * Submits handleOps directly to keep the script deterministic, even though the
- * deployed bundler now has an automatic submission loop.
+ * Submits via eth_sendUserOperation and lets the bundler auto-submitter
+ * handle the on-chain handleOps call — true end-to-end flow.
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -10,7 +10,6 @@ import { resolve } from "node:path";
 import {
   concatHex,
   createPublicClient,
-  createWalletClient,
   encodeFunctionData,
   formatUnits,
   getAddress,
@@ -36,16 +35,9 @@ const TRANSFER_AMOUNT = 10_000n; // 0.01 USDC
 // Pre-deployed Permit4337Account with USDC balance
 const ACCOUNT_ADDRESS = getAddress("0xe15b923912ec01c9886e31aa46c57f60c22c5c9f");
 
-const deployerPk = readFileSync(
-  resolve(process.env.HOME!, ".config/crypto-wallet-testing/pk.hex"),
-  "utf8",
-).trim() as Hex;
 const ownerPk = `0x${"ab".repeat(32)}` as Hex;
-
-const deployerAccount = privateKeyToAccount(deployerPk);
 const ownerAccount = privateKeyToAccount(ownerPk);
 
-console.log(`Deployer: ${deployerAccount.address}`);
 console.log(`Account owner: ${ownerAccount.address}`);
 console.log(`Smart account: ${ACCOUNT_ADDRESS}`);
 console.log(`Recipient: ${RECIPIENT} (gustavog.eth)`);
@@ -62,11 +54,6 @@ const taiko = {
 };
 
 const publicClient = createPublicClient({ chain: taiko, transport: http(RPC_URL) });
-const walletClient = createWalletClient({
-  account: deployerAccount,
-  chain: taiko,
-  transport: http(RPC_URL),
-});
 
 // ---------------------------------------------------------------------------
 // ABIs
@@ -130,10 +117,8 @@ const main = async () => {
     args: [ACCOUNT_ADDRESS],
   });
   const accountEth = await publicClient.getBalance({ address: ACCOUNT_ADDRESS });
-  const deployerEth = await publicClient.getBalance({ address: deployerAccount.address });
   console.log(`Account USDC: ${formatUnits(accountUsdc, 6)}`);
   console.log(`Account ETH: ${formatUnits(accountEth, 18)} (should be 0)`);
-  console.log(`Deployer ETH: ${formatUnits(deployerEth, 18)} (for handleOps submission)`);
 
   if (accountUsdc < TRANSFER_AMOUNT) {
     throw new Error(`Account needs at least ${formatUnits(TRANSFER_AMOUNT, 6)} USDC`);
@@ -276,25 +261,59 @@ const main = async () => {
   });
   console.log(`UserOp hash: ${userOpHash}`);
 
-  // 7. Submit handleOps directly (deployer acts as bundler, gets reimbursed)
-  console.log("\n--- Step 7: Submit handleOps ---");
-  const finalUserOp = { ...packedUserOp, signature: userOpSignature };
+  // 7. Submit via eth_sendUserOperation (bundler auto-submitter handles on-chain tx)
+  console.log("\n--- Step 7: Submit via eth_sendUserOperation ---");
+  const sendUserOp = {
+    sender: ACCOUNT_ADDRESS,
+    nonce: "0x0",
+    initCode: "0x",
+    callData,
+    callGasLimit: pmData.callGasLimit,
+    verificationGasLimit: pmData.verificationGasLimit,
+    preVerificationGas: pmData.preVerificationGas,
+    maxFeePerGas: toHex(gasPrice),
+    maxPriorityFeePerGas: toHex(gasPrice),
+    paymasterAndData: pmData.paymasterAndData,
+    signature: userOpSignature,
+  };
 
-  const simulation = await publicClient.simulateContract({
-    account: deployerAccount,
-    address: ENTRY_POINT,
-    abi: ENTRY_POINT_ABI,
-    functionName: "handleOps",
-    args: [[finalUserOp], deployerAccount.address],
-  });
+  const sendResult = await servoRpc("eth_sendUserOperation", [sendUserOp, ENTRY_POINT]);
+  const returnedHash = sendResult as unknown as string;
+  console.log(`Submitted! UserOp hash: ${returnedHash}`);
 
-  const txHash = await walletClient.writeContract(simulation.request);
+  // 8. Poll for receipt (bundler auto-submitter will pick it up)
+  console.log("\n--- Step 8: Waiting for bundler to submit on-chain ---");
+  const POLL_INTERVAL_MS = 3_000;
+  const MAX_WAIT_MS = 120_000;
+  const startTime = Date.now();
+  let receipt: Record<string, unknown> | null = null;
+
+  while (Date.now() - startTime < MAX_WAIT_MS) {
+    try {
+      const result = await servoRpc("eth_getUserOperationReceipt", [returnedHash]);
+      if (result) {
+        receipt = result as unknown as Record<string, unknown>;
+        break;
+      }
+    } catch {
+      // Not yet submitted, keep polling
+    }
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    console.log(`  Polling... (${elapsed}s elapsed)`);
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+  }
+
+  if (!receipt) {
+    throw new Error(`Timed out waiting for UserOp receipt after ${MAX_WAIT_MS / 1000}s`);
+  }
+
+  const txHash = (receipt as Record<string, unknown>).receipt
+    ? ((receipt as Record<string, unknown>).receipt as Record<string, string>).transactionHash
+    : (receipt as Record<string, string>).transactionHash;
   console.log(`Transaction: ${txHash}`);
+  console.log(`Success: ${(receipt as Record<string, unknown>).success}`);
 
-  const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
-  console.log(`Status: ${receipt.status} (gas used: ${receipt.gasUsed})`);
-
-  // 8. Verify results
+  // 9. Verify results
   console.log("\n--- Results ---");
   const recipientUsdc = await publicClient.readContract({
     address: USDC,
@@ -309,15 +328,12 @@ const main = async () => {
     args: [ACCOUNT_ADDRESS],
   });
   const accountEthAfter = await publicClient.getBalance({ address: ACCOUNT_ADDRESS });
-  const deployerEthAfter = await publicClient.getBalance({ address: deployerAccount.address });
 
   console.log(`Recipient USDC: ${formatUnits(recipientUsdc, 6)}`);
   console.log(`Account USDC: ${formatUnits(accountUsdc, 6)} → ${formatUnits(accountUsdcAfter, 6)}`);
   console.log(`Account ETH: ${formatUnits(accountEthAfter, 18)} (should be 0 — gas paid in USDC)`);
-  console.log(
-    `Deployer ETH: ${formatUnits(deployerEth, 18)} → ${formatUnits(deployerEthAfter, 18)} (reimbursed by EntryPoint)`,
-  );
   console.log(`\n✅ Successfully sent 0.01 USDC to gustavog.eth using Servo paymaster!`);
+  console.log(`   No ETH needed — bundler auto-submitter handled everything.`);
 };
 
 main().catch((err) => {
