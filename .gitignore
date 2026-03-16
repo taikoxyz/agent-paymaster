@@ -19,3 +19,6 @@ data/
 .vercel
 .env*.local
 package-lock.json
+
+# Local notes
+.notes/
