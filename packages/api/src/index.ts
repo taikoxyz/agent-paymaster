@@ -898,7 +898,9 @@ export const createApp = (options: CreateAppOptions = {}): Hono => {
     try {
       if (USER_OPERATION_SUBMISSION_METHODS.has(payload.method)) {
         const entryPointArg =
-          Array.isArray(payload.params) && payload.params.length >= 2 ? payload.params[1] : undefined;
+          Array.isArray(payload.params) && payload.params.length >= 2
+            ? payload.params[1]
+            : undefined;
         paymasterService.validateUserOperationEntryPoint(entryPointArg, payload.method);
       }
 

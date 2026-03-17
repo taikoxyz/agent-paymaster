@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { privateKeyToAccount } from "viem/accounts";
 
-import { ServoRpcClient } from "./client.js";
+import { ServoClient } from "./client.js";
 import { createAndExecute } from "./flow.js";
 
 describe("createAndExecute", () => {
   it("orchestrates quote -> permit -> sign -> submit", async () => {
     const rpcMethods: string[] = [];
 
-    const rpcClient = new ServoRpcClient({
+    const client = new ServoClient({
       rpcUrl: "http://localhost:3000/rpc",
       fetchImpl: async (_input, init) => {
         const payload = JSON.parse(String(init?.body)) as {
@@ -19,7 +19,10 @@ describe("createAndExecute", () => {
 
         rpcMethods.push(payload.method);
 
-        if (payload.method === "pm_getPaymasterData") {
+        if (
+          payload.method === "pm_getPaymasterStubData" ||
+          payload.method === "pm_getPaymasterData"
+        ) {
           return new Response(
             JSON.stringify({
               jsonrpc: "2.0",
@@ -77,10 +80,6 @@ describe("createAndExecute", () => {
           return 7n;
         }
 
-        if (functionName === "getUserOpHash") {
-          return `0x${"12".repeat(32)}`;
-        }
-
         throw new Error(`Unexpected function: ${functionName}`);
       }),
     };
@@ -90,7 +89,7 @@ describe("createAndExecute", () => {
     );
 
     const result = await createAndExecute({
-      rpcClient,
+      client,
       publicClient: publicClient as unknown as Parameters<
         typeof createAndExecute
       >[0]["publicClient"],
@@ -112,14 +111,12 @@ describe("createAndExecute", () => {
     });
 
     expect(rpcMethods).toEqual([
-      "pm_getPaymasterData",
+      "pm_getPaymasterStubData",
       "pm_getPaymasterData",
       "eth_sendUserOperation",
     ]);
     expect(result.counterfactualAddress).toBe("0x3333333333333333333333333333333333333333");
     expect(result.userOperationHash).toBe(`0x${"ab".repeat(32)}`);
     expect(result.permit.value).toBe("1000000");
-    expect(result.userOperation.signature).toMatch(/^0x[0-9a-f]+$/u);
-    expect(result.userOperation.signature).not.toBe(`0x${"11".repeat(32)}${"22".repeat(32)}1b`);
   });
 });

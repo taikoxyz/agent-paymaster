@@ -1,4 +1,4 @@
-import { SERVO_TAIKO_ENTRY_POINT_V08 } from "@agent-paymaster/shared";
+import { SERVO_TAIKO_ENTRY_POINT_V07 } from "@agent-paymaster/shared";
 
 const DEPOSITS_SELECTOR = "0xfc7e286d";
 const DEFAULT_TAIKO_RPC_URL = "https://rpc.mainnet.taiko.xyz";
@@ -66,7 +66,7 @@ export class EntryPointMonitor {
   constructor(config: EntryPointMonitorConfig) {
     this.rpcUrl = config.taikoRpcUrl ?? DEFAULT_TAIKO_RPC_URL;
     this.paymasterAddress = config.paymasterAddress.toLowerCase();
-    this.entryPointAddress = config.entryPointAddress ?? SERVO_TAIKO_ENTRY_POINT_V08;
+    this.entryPointAddress = config.entryPointAddress ?? SERVO_TAIKO_ENTRY_POINT_V07;
     this.lowThresholdWei = config.lowThresholdWei ?? DEFAULT_LOW_THRESHOLD_WEI;
     this.criticalThresholdWei = config.criticalThresholdWei ?? DEFAULT_CRITICAL_THRESHOLD_WEI;
     this.fetchImpl = config.fetchImpl ?? fetch;

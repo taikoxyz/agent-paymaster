@@ -1,9 +1,15 @@
-import { concatHex, encodeFunctionData, parseAbi, type PublicClient } from "viem";
+import {
+  type Address,
+  type Hex,
+  concatHex,
+  encodeFunctionData,
+  isAddress,
+  parseAbi,
+  type PublicClient,
+} from "viem";
 
-import { AgentPaymasterSdkError } from "./errors.js";
-import type { Address, HexString, ServoCall } from "./types.js";
+import type { ServoCall } from "./types.js";
 
-const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
 const HEX_PATTERN = /^0x[0-9a-fA-F]*$/;
 const UINT256_MAX = (1n << 256n) - 1n;
 
@@ -17,25 +23,25 @@ export const SERVO_ACCOUNT_ABI = parseAbi([
   "function executeBatch(address[] targets, uint256[] values, bytes[] calldatas)",
 ]);
 
-const normalizeAddress = (value: string, fieldName: string): Address => {
-  if (!ADDRESS_PATTERN.test(value)) {
-    throw new AgentPaymasterSdkError("invalid_address", `${fieldName} must be a valid address`);
+const assertAddress = (value: string, fieldName: string): Address => {
+  if (!isAddress(value, { strict: false })) {
+    throw new Error(`${fieldName} must be a valid address`);
   }
 
-  return value as Address;
+  return value.toLowerCase() as Address;
 };
 
-const normalizeHex = (value: string, fieldName: string): HexString => {
+const assertHex = (value: string, fieldName: string): Hex => {
   if (!HEX_PATTERN.test(value)) {
-    throw new AgentPaymasterSdkError("invalid_hex", `${fieldName} must be a hex string`);
+    throw new Error(`${fieldName} must be a hex string`);
   }
 
-  return value.toLowerCase() as HexString;
+  return value.toLowerCase() as Hex;
 };
 
-const normalizeUint256 = (value: bigint, fieldName: string): bigint => {
+const assertUint256 = (value: bigint, fieldName: string): bigint => {
   if (value < 0n || value > UINT256_MAX) {
-    throw new AgentPaymasterSdkError("invalid_number", `${fieldName} must fit uint256`);
+    throw new Error(`${fieldName} must fit uint256`);
   }
 
   return value;
@@ -55,13 +61,13 @@ export const getCounterfactualAddress = async ({
   salt,
 }: GetCounterfactualAddressInput): Promise<Address> => {
   const address = await publicClient.readContract({
-    address: normalizeAddress(factoryAddress, "factoryAddress"),
+    address: assertAddress(factoryAddress, "factoryAddress"),
     abi: SERVO_ACCOUNT_FACTORY_ABI,
     functionName: "getAddress",
-    args: [normalizeAddress(owner, "owner"), normalizeUint256(salt, "salt")],
+    args: [assertAddress(owner, "owner"), assertUint256(salt, "salt")],
   });
 
-  return normalizeAddress(address, "counterfactualAddress");
+  return assertAddress(address, "counterfactualAddress");
 };
 
 export interface BuildInitCodeInput {
@@ -70,42 +76,44 @@ export interface BuildInitCodeInput {
   salt: bigint;
 }
 
-export const buildInitCode = ({ factoryAddress, owner, salt }: BuildInitCodeInput): HexString => {
+export const buildInitCode = ({ factoryAddress, owner, salt }: BuildInitCodeInput): Hex => {
   const calldata = encodeFunctionData({
     abi: SERVO_ACCOUNT_FACTORY_ABI,
     functionName: "createAccount",
-    args: [normalizeAddress(owner, "owner"), normalizeUint256(salt, "salt")],
+    args: [assertAddress(owner, "owner"), assertUint256(salt, "salt")],
   });
 
   return concatHex([
-    normalizeAddress(factoryAddress, "factoryAddress") as HexString,
-    normalizeHex(calldata, "createAccount calldata"),
+    assertAddress(factoryAddress, "factoryAddress") as Hex,
+    assertHex(calldata, "createAccount calldata"),
   ]);
 };
 
-const normalizeCall = (call: ServoCall, index: number): ServoCall => {
-  const value = call.value ?? 0n;
+interface NormalizedCall {
+  target: Address;
+  value: bigint;
+  data: Hex;
+}
 
-  return {
-    target: normalizeAddress(call.target, `calls[${index}].target`),
-    value: normalizeUint256(value, `calls[${index}].value`),
-    data: normalizeHex(call.data, `calls[${index}].data`),
-  };
-};
+const normalizeCall = (call: ServoCall, index: number): NormalizedCall => ({
+  target: assertAddress(call.target, `calls[${index}].target`),
+  value: assertUint256(call.value ?? 0n, `calls[${index}].value`),
+  data: assertHex(call.data, `calls[${index}].data`),
+});
 
-export const buildServoExecuteCallData = (call: ServoCall): HexString => {
+export const buildServoExecuteCallData = (call: ServoCall): Hex => {
   const normalized = normalizeCall(call, 0);
 
   return encodeFunctionData({
     abi: SERVO_ACCOUNT_ABI,
     functionName: "execute",
-    args: [normalized.target, normalized.value ?? 0n, normalized.data],
+    args: [normalized.target, normalized.value, normalized.data],
   });
 };
 
-export const buildServoExecuteBatchCallData = (calls: ServoCall[]): HexString => {
+export const buildServoExecuteBatchCallData = (calls: ServoCall[]): Hex => {
   if (calls.length === 0) {
-    throw new AgentPaymasterSdkError("invalid_calls", "calls must contain at least one item");
+    throw new Error("calls must contain at least one item");
   }
 
   const normalized = calls.map((call, index) => normalizeCall(call, index));
@@ -115,15 +123,15 @@ export const buildServoExecuteBatchCallData = (calls: ServoCall[]): HexString =>
     functionName: "executeBatch",
     args: [
       normalized.map((call) => call.target),
-      normalized.map((call) => call.value ?? 0n),
+      normalized.map((call) => call.value),
       normalized.map((call) => call.data),
     ],
   });
 };
 
-export const buildServoCallData = (calls: ServoCall[]): HexString => {
+export const buildServoCallData = (calls: ServoCall[]): Hex => {
   if (calls.length === 0) {
-    throw new AgentPaymasterSdkError("invalid_calls", "calls must contain at least one item");
+    throw new Error("calls must contain at least one item");
   }
 
   if (calls.length === 1) {

@@ -18,8 +18,8 @@ import type { JsonRpcRequest, JsonRpcResponse, DependencyHealth } from "./types.
 // Constants
 // ---------------------------------------------------------------------------
 
-const ENTRY_POINT_V08 = "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
-const ENTRY_POINT_V08_LOWER = ENTRY_POINT_V08.toLowerCase();
+const ENTRY_POINT_V07 = "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
+const ENTRY_POINT_V07_LOWER = ENTRY_POINT_V07.toLowerCase();
 const TEST_QUOTE_SIGNER_PRIVATE_KEY = `0x${"2".repeat(64)}` as const;
 const TEST_PAYMASTER_ADDRESS = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const TEST_TOKEN_ADDRESS = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -68,7 +68,7 @@ function createTestStack(options?: {
 }): TestStack {
   const bundlerService = new BundlerService({
     chainId: 167000,
-    entryPoints: [ENTRY_POINT_V08],
+    entryPoints: [ENTRY_POINT_V07],
     ...options?.bundlerConfig,
   });
 
@@ -201,7 +201,7 @@ describe("integration: full UserOp lifecycle", () => {
     const userOp = makeUserOp();
 
     // Step 1: Estimate gas via API -> Bundler
-    const gasEstimate = await estimateGas(stack.app, userOp, ENTRY_POINT_V08);
+    const gasEstimate = await estimateGas(stack.app, userOp, ENTRY_POINT_V07);
 
     expect(gasEstimate.callGasLimit).toMatch(/^0x[0-9a-f]+$/);
     expect(gasEstimate.verificationGasLimit).toMatch(/^0x[0-9a-f]+$/);
@@ -213,7 +213,7 @@ describe("integration: full UserOp lifecycle", () => {
     const paymasterData = await getPaymasterData(
       stack.app,
       userOp,
-      ENTRY_POINT_V08,
+      ENTRY_POINT_V07,
       "taikoMainnet",
     );
 
@@ -234,7 +234,7 @@ describe("integration: full UserOp lifecycle", () => {
       paymasterAndData: paymasterData.paymasterAndData as string,
     };
 
-    const userOpHash = await sendUserOp(stack.app, fullUserOp, ENTRY_POINT_V08);
+    const userOpHash = await sendUserOp(stack.app, fullUserOp, ENTRY_POINT_V07);
     expect(userOpHash).toMatch(/^0x[0-9a-f]{64}$/);
 
     // Step 4: Verify the UserOp is pending in the bundler
@@ -261,7 +261,7 @@ describe("integration: full UserOp lifecycle", () => {
     expect(receipt).not.toBeNull();
     expect(receipt!.success).toBe(true);
     expect(receipt!.sender).toBe(SENDER_A.toLowerCase());
-    expect(receipt!.entryPoint).toBe(ENTRY_POINT_V08_LOWER);
+    expect(receipt!.entryPoint).toBe(ENTRY_POINT_V07_LOWER);
     expect(BigInt(receipt!.actualGasUsed)).toBeGreaterThan(0n);
     expect(BigInt(receipt!.actualGasCost)).toBeGreaterThan(0n);
 
@@ -275,8 +275,8 @@ describe("integration: full UserOp lifecycle", () => {
   it("duplicate send returns the same hash (idempotency)", async () => {
     const userOp = makeUserOp();
 
-    const hash1 = await sendUserOp(stack.app, userOp, ENTRY_POINT_V08);
-    const hash2 = await sendUserOp(stack.app, userOp, ENTRY_POINT_V08);
+    const hash1 = await sendUserOp(stack.app, userOp, ENTRY_POINT_V07);
+    const hash2 = await sendUserOp(stack.app, userOp, ENTRY_POINT_V07);
 
     expect(hash1).toBe(hash2);
     expect(stack.bundlerService.getPendingUserOperationsCount()).toBe(1);
@@ -285,7 +285,7 @@ describe("integration: full UserOp lifecycle", () => {
   it("supports pm_getPaymasterStubData for gas estimation", async () => {
     const userOp = makeUserOp();
 
-    const stub = await getPaymasterStubData(stack.app, userOp, ENTRY_POINT_V08, "taikoMainnet");
+    const stub = await getPaymasterStubData(stack.app, userOp, ENTRY_POINT_V07, "taikoMainnet");
 
     expect(stub.isStub).toBe(true);
     expect(stub.paymasterAndData).toMatch(/^0x/);
@@ -312,7 +312,7 @@ describe("scenario: happy path with all Taiko chains", () => {
     const userOp = makeUserOp();
 
     for (const chain of ["taikoMainnet", "taikoHekla", "taikoHoodi"] as const) {
-      const data = await getPaymasterData(stack.app, userOp, ENTRY_POINT_V08, chain);
+      const data = await getPaymasterData(stack.app, userOp, ENTRY_POINT_V07, chain);
       expect(data.token).toBe("USDC");
       expect(data.paymasterAndData).toMatch(/^0x/);
       expect(data.maxTokenCost).toMatch(/^\d+\.\d{6}$/);
@@ -330,7 +330,7 @@ describe("scenario: invalid UserOp fields", () => {
   it("rejects UserOp with invalid sender address", async () => {
     const userOp = makeUserOp({ sender: "0xnotanaddress" });
 
-    const res = await rpc(stack.app, "eth_sendUserOperation", [userOp, ENTRY_POINT_V08]);
+    const res = await rpc(stack.app, "eth_sendUserOperation", [userOp, ENTRY_POINT_V07]);
     expect(res.error).toBeDefined();
   });
 
@@ -342,7 +342,7 @@ describe("scenario: invalid UserOp fields", () => {
         jsonrpc: "2.0",
         id: 1,
         method: "eth_sendUserOperation",
-        params: [{ sender: SENDER_A }, ENTRY_POINT_V08],
+        params: [{ sender: SENDER_A }, ENTRY_POINT_V07],
       }),
     });
 
@@ -369,7 +369,7 @@ describe("scenario: invalid UserOp fields", () => {
             maxPriorityFeePerGas: "0x10",
             signature: "0xaa",
           },
-          ENTRY_POINT_V08,
+          ENTRY_POINT_V07,
         ],
       }),
     });
@@ -455,7 +455,7 @@ describe("scenario: sender reputation and banning", () => {
   it("bans sender after repeated validation failures", async () => {
     const stack = createTestStack({
       bundlerConfig: {
-        entryPoints: [ENTRY_POINT_V08],
+        entryPoints: [ENTRY_POINT_V07],
         reputationBanFailures: 3,
         reputationThrottleFailures: 2,
         banWindowMs: 60_000,
@@ -469,7 +469,7 @@ describe("scenario: sender reputation and banning", () => {
         sender: SENDER_B,
         nonce: `0x${(i + 1).toString(16)}`,
       });
-      const hash = await sendUserOp(stack.app, userOp, ENTRY_POINT_V08);
+      const hash = await sendUserOp(stack.app, userOp, ENTRY_POINT_V07);
       userOps.push(hash);
     }
 
@@ -484,7 +484,7 @@ describe("scenario: sender reputation and banning", () => {
       nonce: "0x10",
     });
 
-    const res = await rpc(stack.app, "eth_sendUserOperation", [bannedOp, ENTRY_POINT_V08]);
+    const res = await rpc(stack.app, "eth_sendUserOperation", [bannedOp, ENTRY_POINT_V07]);
     expect(res.error).toBeDefined();
   });
 });
@@ -493,7 +493,7 @@ describe("scenario: gas estimation with Taiko L1 data gas", () => {
   it("includes L1 data gas scalar in pre-verification gas", async () => {
     const stack = createTestStack({
       bundlerConfig: {
-        entryPoints: [ENTRY_POINT_V08],
+        entryPoints: [ENTRY_POINT_V07],
         l1DataGasScalar: 2n,
       },
     });
@@ -502,10 +502,10 @@ describe("scenario: gas estimation with Taiko L1 data gas", () => {
       l1DataGas: "0x1000", // 4096
     });
 
-    const estimate = await estimateGas(stack.app, userOpWithL1, ENTRY_POINT_V08);
+    const estimate = await estimateGas(stack.app, userOpWithL1, ENTRY_POINT_V07);
 
     const userOpWithoutL1 = makeUserOp();
-    const estimateNoL1 = await estimateGas(stack.app, userOpWithoutL1, ENTRY_POINT_V08);
+    const estimateNoL1 = await estimateGas(stack.app, userOpWithoutL1, ENTRY_POINT_V07);
 
     // With L1 data gas, preVerificationGas should be higher
     const preWithL1 = BigInt(estimate.preVerificationGas);
@@ -524,7 +524,7 @@ describe("scenario: multiple UserOps in one bundle", () => {
 
     for (const sender of senders) {
       const userOp = makeUserOp({ sender, nonce: "0x1" });
-      const hash = await sendUserOp(stack.app, userOp, ENTRY_POINT_V08);
+      const hash = await sendUserOp(stack.app, userOp, ENTRY_POINT_V07);
       hashes.push(hash);
     }
 
@@ -565,7 +565,7 @@ describe("scenario: multiple UserOps in one bundle", () => {
         sender: SENDER_A,
         nonce: `0x${(i + 1).toString(16)}`,
       });
-      await sendUserOp(stack.app, userOp, ENTRY_POINT_V08);
+      await sendUserOp(stack.app, userOp, ENTRY_POINT_V07);
     }
 
     const bundle = stack.bundlerService.createBundle(2);
@@ -589,7 +589,7 @@ describe("scenario: failed bundle submission", () => {
     const stack = createTestStack();
 
     const userOp = makeUserOp();
-    const hash = await sendUserOp(stack.app, userOp, ENTRY_POINT_V08);
+    const hash = await sendUserOp(stack.app, userOp, ENTRY_POINT_V07);
 
     const bundle = stack.bundlerService.createBundle();
     expect(bundle).not.toBeNull();
@@ -617,7 +617,7 @@ describe("scenario: paymaster data edge cases", () => {
 
     const res = await rpc(stack.app, "pm_getPaymasterData", [
       makeUserOp(),
-      ENTRY_POINT_V08,
+      ENTRY_POINT_V07,
       "ethereum",
       {},
     ]);
@@ -630,7 +630,7 @@ describe("scenario: paymaster data edge cases", () => {
     const data = await getPaymasterData(
       stack.app,
       makeUserOp(),
-      ENTRY_POINT_V08,
+      ENTRY_POINT_V07,
       167013, // taikoHoodi by ID
     );
 
@@ -651,14 +651,14 @@ describe("scenario: rate limiting across RPC", () => {
     const userOp = makeUserOp();
 
     // First two should succeed
-    const r1 = await estimateGas(stack.app, userOp, ENTRY_POINT_V08);
+    const r1 = await estimateGas(stack.app, userOp, ENTRY_POINT_V07);
     expect(r1.callGasLimit).toBeTruthy();
 
-    const r2 = await estimateGas(stack.app, userOp, ENTRY_POINT_V08);
+    const r2 = await estimateGas(stack.app, userOp, ENTRY_POINT_V07);
     expect(r2.callGasLimit).toBeTruthy();
 
     // Third should be rate limited (JSON-RPC error)
-    const r3 = await rpc(stack.app, "eth_estimateUserOperationGas", [userOp, ENTRY_POINT_V08]);
+    const r3 = await rpc(stack.app, "eth_estimateUserOperationGas", [userOp, ENTRY_POINT_V07]);
     expect(r3.error).toBeDefined();
   });
 
@@ -671,11 +671,11 @@ describe("scenario: rate limiting across RPC", () => {
     });
 
     // Sender A uses their one request
-    const r1 = await sendUserOp(stack.app, makeUserOp({ sender: SENDER_A }), ENTRY_POINT_V08);
+    const r1 = await sendUserOp(stack.app, makeUserOp({ sender: SENDER_A }), ENTRY_POINT_V07);
     expect(r1).toMatch(/^0x/);
 
     // Sender B should still be able to send
-    const r2 = await sendUserOp(stack.app, makeUserOp({ sender: SENDER_B }), ENTRY_POINT_V08);
+    const r2 = await sendUserOp(stack.app, makeUserOp({ sender: SENDER_B }), ENTRY_POINT_V07);
     expect(r2).toMatch(/^0x/);
   });
 });
@@ -700,7 +700,7 @@ describe("load: bundler throughput", () => {
           sender: SENDER_A,
           nonce: `0x${(i + 1).toString(16)}`,
         }),
-        ENTRY_POINT_V08,
+        ENTRY_POINT_V07,
       ),
     );
 
@@ -728,7 +728,7 @@ describe("load: bundler throughput", () => {
           sender: SENDER_A,
           nonce: `0x${(i + 1).toString(16)}`,
         }),
-        ENTRY_POINT_V08,
+        ENTRY_POINT_V07,
       );
       allHashes.push(hash);
     }
@@ -781,7 +781,7 @@ describe("load: bundler throughput", () => {
           nonce: `0x${(i + 1).toString(16)}`,
           callData: `0x${"ab".repeat(i + 1)}`,
         }),
-        ENTRY_POINT_V08,
+        ENTRY_POINT_V07,
       ),
     );
 
@@ -803,7 +803,7 @@ describe("load: bundler throughput", () => {
       getPaymasterData(
         stack.app,
         makeUserOp({ nonce: `0x${(i + 1).toString(16)}` }),
-        ENTRY_POINT_V08,
+        ENTRY_POINT_V07,
         "taikoMainnet",
       ),
     );

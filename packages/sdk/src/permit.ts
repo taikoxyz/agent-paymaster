@@ -1,9 +1,7 @@
+import { type Address, type Hex, isAddress } from "viem";
 import type { LocalAccount } from "viem/accounts";
 
-import { AgentPaymasterSdkError } from "./errors.js";
-import type { Address, HexString, PermitContext } from "./types.js";
-
-const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
+import type { PermitContext } from "./types.js";
 
 const PERMIT_TYPE = [
   { name: "owner", type: "address" },
@@ -48,21 +46,21 @@ export interface SignPermitInput {
 
 export interface SignedPermit {
   typedData: PermitTypedData;
-  signature: HexString;
+  signature: Hex;
   context: PermitContext;
 }
 
-const normalizeAddress = (value: string, fieldName: string): Address => {
-  if (!ADDRESS_PATTERN.test(value)) {
-    throw new AgentPaymasterSdkError("invalid_address", `${fieldName} must be a valid address`);
+const assertAddress = (value: string, fieldName: string): Address => {
+  if (!isAddress(value, { strict: false })) {
+    throw new Error(`${fieldName} must be a valid address`);
   }
 
-  return value as Address;
+  return value.toLowerCase() as Address;
 };
 
-const normalizeUint = (value: bigint, fieldName: string): bigint => {
+const assertNonNegative = (value: bigint, fieldName: string): bigint => {
   if (value < 0n) {
-    throw new AgentPaymasterSdkError("invalid_number", `${fieldName} must be non-negative`);
+    throw new Error(`${fieldName} must be non-negative`);
   }
 
   return value;
@@ -73,18 +71,18 @@ export const buildPermitTypedData = (input: Omit<SignPermitInput, "account">): P
     name: input.tokenName ?? "USD Coin",
     version: input.tokenVersion ?? "2",
     chainId: input.chainId,
-    verifyingContract: normalizeAddress(input.tokenAddress, "tokenAddress"),
+    verifyingContract: assertAddress(input.tokenAddress, "tokenAddress"),
   },
   types: {
     Permit: PERMIT_TYPE,
   },
   primaryType: "Permit",
   message: {
-    owner: normalizeAddress(input.owner, "owner"),
-    spender: normalizeAddress(input.spender, "spender"),
-    value: normalizeUint(input.value, "value"),
-    nonce: normalizeUint(input.nonce, "nonce"),
-    deadline: normalizeUint(input.deadline, "deadline"),
+    owner: assertAddress(input.owner, "owner"),
+    spender: assertAddress(input.spender, "spender"),
+    value: assertNonNegative(input.value, "value"),
+    nonce: assertNonNegative(input.nonce, "nonce"),
+    deadline: assertNonNegative(input.deadline, "deadline"),
   },
 });
 
@@ -96,7 +94,7 @@ export const signPermit = async (input: SignPermitInput): Promise<SignedPermit> 
     types: typedData.types,
     primaryType: typedData.primaryType,
     message: typedData.message,
-  })) as HexString;
+  })) as Hex;
 
   return {
     typedData,

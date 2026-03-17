@@ -10,7 +10,7 @@ import {
 } from "./index.js";
 import { BundlerSubmitter, type SubmissionClient, type SubmissionReceipt } from "./submitter.js";
 
-const ENTRY_POINT_V08 = "0x0000000071727de22e5e9d8baf0edac6f37da032";
+const ENTRY_POINT_V07 = "0x0000000071727de22e5e9d8baf0edac6f37da032";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 const buildUserOperation = (overrides: Partial<UserOperation> = {}): UserOperation => ({
@@ -278,7 +278,7 @@ const makeUserOperationEventLog = (
     actualGasUsed: bigint;
   },
 ) => ({
-  address: ENTRY_POINT_V08,
+  address: ENTRY_POINT_V07,
   topics: encodeEventTopics({
     abi: ENTRY_POINT_ABI,
     eventName: "UserOperationEvent",
@@ -301,7 +301,7 @@ describe("BundlerSubmitter", () => {
 
     const service = new BundlerService({
       chainId: 167000,
-      entryPoints: [ENTRY_POINT_V08],
+      entryPoints: [ENTRY_POINT_V07],
     });
     const submitter = new BundlerSubmitter(service, {
       chainRpcUrl: "https://rpc.mainnet.taiko.xyz",
@@ -324,7 +324,7 @@ describe("BundlerSubmitter", () => {
   it("rejects invalid beneficiary addresses at construction time", () => {
     const service = new BundlerService({
       chainId: 167000,
-      entryPoints: [ENTRY_POINT_V08],
+      entryPoints: [ENTRY_POINT_V07],
     });
 
     expect(
@@ -341,10 +341,10 @@ describe("BundlerSubmitter", () => {
     const client = new FakeSubmissionClient();
     const service = new BundlerService({
       chainId: 167000,
-      entryPoints: [ENTRY_POINT_V08],
+      entryPoints: [ENTRY_POINT_V07],
     });
     const userOperation = buildUserOperation();
-    const userOpHash = await service.sendUserOperation(userOperation, ENTRY_POINT_V08);
+    const userOpHash = await service.sendUserOperation(userOperation, ENTRY_POINT_V07);
     const submitter = new BundlerSubmitter(service, {
       chainRpcUrl: "https://rpc.mainnet.taiko.xyz",
       privateKey: `0x${"1".repeat(64)}`,
@@ -398,9 +398,9 @@ describe("BundlerSubmitter", () => {
 
     const service = new BundlerService({
       chainId: 167000,
-      entryPoints: [ENTRY_POINT_V08],
+      entryPoints: [ENTRY_POINT_V07],
     });
-    const userOpHash = await service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08);
+    const userOpHash = await service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V07);
     const submitter = new BundlerSubmitter(service, {
       chainRpcUrl: "https://rpc.mainnet.taiko.xyz",
       privateKey: `0x${"1".repeat(64)}`,
@@ -427,15 +427,15 @@ describe("BundlerSubmitter", () => {
     const client = new FakeSubmissionClient();
     const service = new BundlerService({
       chainId: 167000,
-      entryPoints: [ENTRY_POINT_V08],
+      entryPoints: [ENTRY_POINT_V07],
     });
     const includedHash = await service.sendUserOperation(
       buildUserOperation({ nonce: "0x10" }),
-      ENTRY_POINT_V08,
+      ENTRY_POINT_V07,
     );
     const failedHash = await service.sendUserOperation(
       buildUserOperation({ nonce: "0x11" }),
-      ENTRY_POINT_V08,
+      ENTRY_POINT_V07,
     );
     const submitter = new BundlerSubmitter(service, {
       chainRpcUrl: "https://rpc.mainnet.taiko.xyz",
@@ -485,7 +485,7 @@ describe("BundlerSubmitter", () => {
     const persistence = new FakePersistence();
     const userOpHash = "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
     persistence.pendingOperations.set(userOpHash, {
-      entryPoint: ENTRY_POINT_V08,
+      entryPoint: ENTRY_POINT_V07,
       userOperation: buildUserOperation({
         callGasLimit: undefined,
         verificationGasLimit: undefined,
@@ -499,7 +499,7 @@ describe("BundlerSubmitter", () => {
     const service = new BundlerService(
       {
         chainId: 167000,
-        entryPoints: [ENTRY_POINT_V08],
+        entryPoints: [ENTRY_POINT_V07],
       },
       persistence,
     );
@@ -523,9 +523,9 @@ describe("BundlerSubmitter", () => {
     const client = new FakeSubmissionClient();
     const service = new BundlerService({
       chainId: 167000,
-      entryPoints: [ENTRY_POINT_V08],
+      entryPoints: [ENTRY_POINT_V07],
     });
-    const hash = await service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08);
+    const hash = await service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V07);
     const submitter = new BundlerSubmitter(service, {
       chainRpcUrl: "https://rpc.mainnet.taiko.xyz",
       privateKey: `0x${"1".repeat(64)}`,
@@ -552,9 +552,9 @@ describe("BundlerSubmitter", () => {
 
     const service = new BundlerService({
       chainId: 167000,
-      entryPoints: [ENTRY_POINT_V08],
+      entryPoints: [ENTRY_POINT_V07],
     });
-    const hash = await service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08);
+    const hash = await service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V07);
     const claim = service.claimPendingUserOperations(1);
     expect(claim?.userOperations[0]?.hash).toBe(hash);
     service.recordUserOperationsSubmissionTxHash([hash], client.nextTransactionHash);
@@ -580,13 +580,13 @@ describe("BundlerSubmitter", () => {
     const persistence = new FakePersistence();
     const bootstrapService = new BundlerService({
       chainId: 167000,
-      entryPoints: [ENTRY_POINT_V08],
+      entryPoints: [ENTRY_POINT_V07],
     });
     const userOperation = buildUserOperation();
-    const userOpHash = await bootstrapService.sendUserOperation(userOperation, ENTRY_POINT_V08);
+    const userOpHash = await bootstrapService.sendUserOperation(userOperation, ENTRY_POINT_V07);
 
     persistence.pendingOperations.set(userOpHash, {
-      entryPoint: ENTRY_POINT_V08,
+      entryPoint: ENTRY_POINT_V07,
       userOperation,
       receivedAt: Date.now() - 5_000,
       state: "submitting",
@@ -597,7 +597,7 @@ describe("BundlerSubmitter", () => {
     const service = new BundlerService(
       {
         chainId: 167000,
-        entryPoints: [ENTRY_POINT_V08],
+        entryPoints: [ENTRY_POINT_V07],
       },
       persistence,
     );

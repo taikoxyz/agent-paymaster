@@ -2,6 +2,7 @@ import {
   buildHealth,
   normalizePaymasterAndData,
   SERVO_SUPPORTED_ENTRY_POINTS,
+  SERVO_TAIKO_ENTRY_POINT_V07,
 } from "@agent-paymaster/shared";
 import { serve } from "@hono/node-server";
 import { createHash } from "node:crypto";
@@ -38,11 +39,9 @@ const REPUTATION_THROTTLE_FAILURES = 3;
 const REPUTATION_BAN_FAILURES = 5;
 const DEFAULT_REPUTATION_WINDOW_MS = 5 * 60 * 1000;
 const DEFAULT_THROTTLE_WINDOW_MS = 10 * 1000;
-const CANONICAL_TAIKO_ENTRY_POINT_V08 =
-  "0x0000000071727de22e5e9d8baf0edac6f37da032" as HexString;
 const DEFAULT_SUPPORTED_ENTRY_POINTS: HexString[] = Array.isArray(SERVO_SUPPORTED_ENTRY_POINTS)
   ? [...SERVO_SUPPORTED_ENTRY_POINTS]
-  : [CANONICAL_TAIKO_ENTRY_POINT_V08];
+  : [SERVO_TAIKO_ENTRY_POINT_V07];
 
 export interface UserOperation {
   sender: HexString;
@@ -648,34 +647,34 @@ export class BundlerService {
 
     for (const entry of persistence.loadPendingOperations()) {
       const stored = this.createStoredOperation({
-          hash: entry.hash,
-          userOperation: entry.userOperation,
-          entryPoint: entry.entryPoint,
-          receivedAt: entry.receivedAt,
-          state: entry.state,
-          submissionTxHash: entry.submissionTxHash,
-          submissionStartedAt: entry.submissionStartedAt,
-        });
+        hash: entry.hash,
+        userOperation: entry.userOperation,
+        entryPoint: entry.entryPoint,
+        receivedAt: entry.receivedAt,
+        state: entry.state,
+        submissionTxHash: entry.submissionTxHash,
+        submissionStartedAt: entry.submissionStartedAt,
+      });
       stored.estimatedGasLimit = this.getDeclaredGasLimit(entry.userOperation);
       this.userOperations.set(entry.hash, stored);
     }
 
     for (const entry of persistence.loadFinalizedOperations()) {
       const stored = this.createStoredOperation({
-          hash: entry.hash,
-          userOperation: entry.userOperation,
-          entryPoint: entry.entryPoint,
-          receivedAt: entry.receivedAt,
-          state: entry.state,
-          transactionHash: entry.transactionHash,
-          blockNumber: entry.blockNumber,
-          blockHash: entry.blockHash,
-          reason: entry.reason,
-          gasUsed: entry.gasUsed,
-          gasCost: entry.gasCost,
-          effectiveGasPrice: entry.effectiveGasPrice,
-          finalizedAt: entry.finalizedAt,
-        });
+        hash: entry.hash,
+        userOperation: entry.userOperation,
+        entryPoint: entry.entryPoint,
+        receivedAt: entry.receivedAt,
+        state: entry.state,
+        transactionHash: entry.transactionHash,
+        blockNumber: entry.blockNumber,
+        blockHash: entry.blockHash,
+        reason: entry.reason,
+        gasUsed: entry.gasUsed,
+        gasCost: entry.gasCost,
+        effectiveGasPrice: entry.effectiveGasPrice,
+        finalizedAt: entry.finalizedAt,
+      });
       stored.estimatedGasLimit = this.getDeclaredGasLimit(entry.userOperation);
       this.userOperations.set(entry.hash, stored);
     }
@@ -975,12 +974,12 @@ export class BundlerService {
 
     const receivedAt = Date.now();
     const stored = this.createStoredOperation({
-        hash: userOpHash,
-        userOperation: preparedUserOperation,
-        entryPoint: parsed.entryPoint,
-        receivedAt,
-        state: "pending",
-      });
+      hash: userOpHash,
+      userOperation: preparedUserOperation,
+      entryPoint: parsed.entryPoint,
+      receivedAt,
+      state: "pending",
+    });
     stored.estimatedGasLimit = this.getDeclaredGasLimit(preparedUserOperation);
     this.userOperations.set(userOpHash, stored);
 

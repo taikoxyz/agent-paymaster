@@ -64,10 +64,10 @@ Monitoring signals exposed in `/metrics` include submitter ETH balance, mempool 
 **Solidity 0.8.24** with Foundry (optimizer 200 runs, via-ir, Cancun EVM).
 
 - `TaikoUsdcPaymaster.sol` — main paymaster: quote validation, permit support, USDC settlement
-- `Permit4337Account.sol` — account-side permit helper
 - `ServoAccount.sol` — canonical single-owner ERC-4337 account with ERC-1271 permit validation
 - `ServoAccountFactory.sol` — deterministic CREATE2 factory for ServoAccount deployment and address derivation
-- `PaymasterStub.sol` — testing stub
+- `PaymasterStub.sol` — testing stub (in `test/`)
+- `Permit4337Account.sol` — smoke-test account (in `test/`)
 
 Contract tests: `cd packages/paymaster-contracts && forge test -vvv`
 Gas report: `forge test --gas-report`
@@ -170,7 +170,7 @@ Vercel should use standard deployment protection (`prod_deployment_urls_and_all_
 - **SQLite WAL**: the bundler and API share a SQLite volume. Don't delete `./data/` while services are running.
 - **Bundler read-only mode**: if `BUNDLER_SUBMITTER_PRIVATE_KEY` is unset, the bundler rejects `eth_sendUserOperation` instead of accepting UserOps it cannot submit.
 - **Quote TTL**: quotes expire (default 90s). Tests that hold quotes too long will fail on-chain.
-- **Packed format**: ERC-4337 v0.8 uses packed UserOp format. Don't confuse with v0.7 struct layout.
+- **Packed format**: ERC-4337 v0.7 uses packed UserOp format. Don't confuse with v0.6 struct layout.
 - **Docker**: two separate Dockerfiles — `Dockerfile` (API) and `Dockerfile.bundler`. Both expose `/health`.
 - **Railway config**: `railway.api.json` and `railway.bundler.json` are the in-repo service manifests used by the release workflow
 

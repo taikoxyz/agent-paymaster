@@ -12,8 +12,8 @@ import {
   type UserOperation,
 } from "./index.js";
 
-const ENTRY_POINT_V08 = "0x0000000071727de22e5e9d8baf0edac6f37da032";
-const ENTRY_POINT_V07 = "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789";
+const ENTRY_POINT_V07 = "0x0000000071727de22e5e9d8baf0edac6f37da032";
+const ENTRY_POINT_V06 = "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789";
 
 const buildUserOperation = (overrides: Partial<UserOperation> = {}): UserOperation => ({
   sender: "0x1111111111111111111111111111111111111111",
@@ -63,10 +63,7 @@ class ThrowingGasSimulator implements GasSimulator {
 }
 
 class PassingAdmissionSimulator implements AdmissionSimulator {
-  simulateValidation(
-    _userOperation: UserOperation,
-    _entryPoint: `0x${string}`,
-  ): Promise<void> {
+  simulateValidation(_userOperation: UserOperation, _entryPoint: `0x${string}`): Promise<void> {
     void _userOperation;
     void _entryPoint;
     return Promise.resolve();
@@ -76,10 +73,7 @@ class PassingAdmissionSimulator implements AdmissionSimulator {
 class RejectingAdmissionSimulator implements AdmissionSimulator {
   constructor(private readonly message: string) {}
 
-  simulateValidation(
-    _userOperation: UserOperation,
-    _entryPoint: `0x${string}`,
-  ): Promise<void> {
+  simulateValidation(_userOperation: UserOperation, _entryPoint: `0x${string}`): Promise<void> {
     void _userOperation;
     void _entryPoint;
     return Promise.reject(new Error(this.message));
@@ -335,13 +329,13 @@ describe("BundlerService", () => {
 
   it("defaults to the canonical Taiko entry point", async () => {
     const defaultService = new BundlerService();
-    expect(defaultService.getSupportedEntryPoints()).toEqual([ENTRY_POINT_V08]);
+    expect(defaultService.getSupportedEntryPoints()).toEqual([ENTRY_POINT_V07]);
   });
 
   beforeEach(() => {
     service = new BundlerService({
       chainId: 167000,
-      entryPoints: [ENTRY_POINT_V08, ENTRY_POINT_V07],
+      entryPoints: [ENTRY_POINT_V07, ENTRY_POINT_V06],
       reputationBanFailures: 5,
       reputationThrottleFailures: 3,
       banWindowMs: 60_000,
@@ -355,7 +349,7 @@ describe("BundlerService", () => {
     expect(health.service).toBe("bundler");
     expect(health.status).toBe("ok");
     expect(health.chainId).toBe(167000);
-    expect(health.entryPoints).toEqual([ENTRY_POINT_V08, ENTRY_POINT_V07]);
+    expect(health.entryPoints).toEqual([ENTRY_POINT_V07, ENTRY_POINT_V06]);
     expect(health.mempoolDepth).toEqual({
       pending: 0,
       submitting: 0,
@@ -371,15 +365,15 @@ describe("BundlerService", () => {
   it("tracks mempool age distribution and lifecycle counters", async () => {
     const pendingHash = await service.sendUserOperation(
       buildUserOperation({ nonce: "0x10" }),
-      ENTRY_POINT_V08,
+      ENTRY_POINT_V07,
     );
     const revertedHash = await service.sendUserOperation(
       buildUserOperation({ nonce: "0x11" }),
-      ENTRY_POINT_V08,
+      ENTRY_POINT_V07,
     );
     const includedHash = await service.sendUserOperation(
       buildUserOperation({ nonce: "0x12" }),
-      ENTRY_POINT_V08,
+      ENTRY_POINT_V07,
     );
 
     const queuedHealth = service.getHealth();
@@ -433,14 +427,14 @@ describe("BundlerService", () => {
     const defaultService = new BundlerService();
     const expected = Array.isArray(SERVO_SUPPORTED_ENTRY_POINTS)
       ? [...SERVO_SUPPORTED_ENTRY_POINTS]
-      : [ENTRY_POINT_V08];
+      : [ENTRY_POINT_V07];
     expect(defaultService.getSupportedEntryPoints()).toEqual(expected);
   });
 
   it("estimates gas including taiko l1 data gas contribution", async () => {
     const estimate = await service.estimateUserOperationGas(
       buildUserOperation({ l1DataGas: "0x64" }),
-      ENTRY_POINT_V08,
+      ENTRY_POINT_V07,
     );
 
     expect(estimate.callGasLimit).toBe("0xd6f8");
@@ -453,7 +447,7 @@ describe("BundlerService", () => {
   it("charges initCode byte cost against verification gas, not call gas", async () => {
     const estimate = await service.estimateUserOperationGas(
       buildUserOperation({ initCode: "0x1234" }),
-      ENTRY_POINT_V08,
+      ENTRY_POINT_V07,
     );
 
     expect(estimate.callGasLimit).toBe("0xd6f8");
@@ -463,13 +457,13 @@ describe("BundlerService", () => {
   it("uses simulation preOpGas to raise verification gas for deployed accounts", async () => {
     const serviceWithSimulation = new BundlerService({
       chainId: 167000,
-      entryPoints: [ENTRY_POINT_V08],
+      entryPoints: [ENTRY_POINT_V07],
       gasSimulator: new FakeGasSimulator(300_000n),
     });
 
     const estimate = await serviceWithSimulation.estimateUserOperationGas(
       buildUserOperation(),
-      ENTRY_POINT_V08,
+      ENTRY_POINT_V07,
     );
 
     expect(estimate.verificationGasLimit).toBe("0x441d0");
@@ -478,13 +472,13 @@ describe("BundlerService", () => {
   it("uses simulation preOpGas to raise verification gas for initCode accounts", async () => {
     const serviceWithSimulation = new BundlerService({
       chainId: 167000,
-      entryPoints: [ENTRY_POINT_V08],
+      entryPoints: [ENTRY_POINT_V07],
       gasSimulator: new FakeGasSimulator(450_000n),
     });
 
     const estimate = await serviceWithSimulation.estimateUserOperationGas(
       buildUserOperation({ initCode: "0x12345678" }),
-      ENTRY_POINT_V08,
+      ENTRY_POINT_V07,
     );
 
     expect(estimate.verificationGasLimit).toBe("0x68bc0");
@@ -493,13 +487,13 @@ describe("BundlerService", () => {
   it("falls back to heuristic estimates when simulation fails", async () => {
     const serviceWithFailingSimulation = new BundlerService({
       chainId: 167000,
-      entryPoints: [ENTRY_POINT_V08],
+      entryPoints: [ENTRY_POINT_V07],
       gasSimulator: new ThrowingGasSimulator(),
     });
 
     const estimate = await serviceWithFailingSimulation.estimateUserOperationGas(
       buildUserOperation({ initCode: "0x1234" }),
-      ENTRY_POINT_V08,
+      ENTRY_POINT_V07,
     );
 
     expect(estimate.callGasLimit).toBe("0xd6f8");
@@ -508,11 +502,11 @@ describe("BundlerService", () => {
   });
 
   it("stores pending user operations and resolves lookups", async () => {
-    const userOpHash = await service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08);
+    const userOpHash = await service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V07);
     const lookup = service.getUserOperationByHash(userOpHash);
 
     expect(lookup).not.toBeNull();
-    expect(lookup?.entryPoint).toBe(ENTRY_POINT_V08);
+    expect(lookup?.entryPoint).toBe(ENTRY_POINT_V07);
     expect(lookup?.transactionHash).toBeNull();
     expect(service.getPendingUserOperationsCount()).toBe(1);
   });
@@ -520,18 +514,18 @@ describe("BundlerService", () => {
   it("claims pending operations for submission by entry point", async () => {
     const firstHash = await service.sendUserOperation(
       buildUserOperation({ nonce: "0x1" }),
-      ENTRY_POINT_V08,
+      ENTRY_POINT_V07,
     );
-    await service.sendUserOperation(buildUserOperation({ nonce: "0x2" }), ENTRY_POINT_V07);
+    await service.sendUserOperation(buildUserOperation({ nonce: "0x2" }), ENTRY_POINT_V06);
     const thirdHash = await service.sendUserOperation(
       buildUserOperation({ nonce: "0x3" }),
-      ENTRY_POINT_V08,
+      ENTRY_POINT_V07,
     );
 
     const claim = service.claimPendingUserOperations(10);
 
     expect(claim).not.toBeNull();
-    expect(claim?.entryPoint).toBe(ENTRY_POINT_V08);
+    expect(claim?.entryPoint).toBe(ENTRY_POINT_V07);
     expect(claim?.userOperations.map((operation) => operation.hash)).toEqual([
       firstHash,
       thirdHash,
@@ -541,7 +535,7 @@ describe("BundlerService", () => {
   });
 
   it("records submission tx hashes and can release a claimed operation", async () => {
-    const hash = await service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08);
+    const hash = await service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V07);
     const claim = service.claimPendingUserOperations(1);
 
     expect(claim?.userOperations[0]?.hash).toBe(hash);
@@ -563,18 +557,18 @@ describe("BundlerService", () => {
 
   it("uses canonical ERC-4337 userOpHash and ignores signature field", async () => {
     const userOperation = buildUserOperation();
-    const hash = await service.sendUserOperation(userOperation, ENTRY_POINT_V08);
+    const hash = await service.sendUserOperation(userOperation, ENTRY_POINT_V07);
 
     const sameUserOpDifferentSignature = await service.sendUserOperation(
       buildUserOperation({ signature: "0x123456" }),
-      ENTRY_POINT_V08,
+      ENTRY_POINT_V07,
     );
 
     const legacyHash = `0x${createHash("sha256")
       .update(
         JSON.stringify({
           chainId: 167000,
-          entryPoint: ENTRY_POINT_V08,
+          entryPoint: ENTRY_POINT_V07,
           userOperation: {
             sender: userOperation.sender.toLowerCase(),
             nonce: userOperation.nonce,
@@ -598,19 +592,19 @@ describe("BundlerService", () => {
   });
 
   it("rejects a second pending operation with the same sender and nonce", async () => {
-    await service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08);
+    await service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V07);
 
     await expect(
       service.sendUserOperation(
         buildUserOperation({ nonce: "0x01", callData: "0xabcd" }),
-        ENTRY_POINT_V08,
+        ENTRY_POINT_V07,
       ),
     ).rejects.toThrow("Conflicting pending operation");
   });
 
   it("rejects empty signatures", async () => {
     await expect(
-      service.sendUserOperation(buildUserOperation({ signature: "0x" }), ENTRY_POINT_V08),
+      service.sendUserOperation(buildUserOperation({ signature: "0x" }), ENTRY_POINT_V07),
     ).rejects.toThrow("signature must not be empty");
   });
 
@@ -621,7 +615,7 @@ describe("BundlerService", () => {
           ...buildUserOperation(),
           chainId: 167009,
         },
-        ENTRY_POINT_V08,
+        ENTRY_POINT_V07,
       ),
     ).rejects.toThrow("chainId must match bundler chainId");
   });
@@ -629,12 +623,12 @@ describe("BundlerService", () => {
   it("does not enqueue user operations when admission simulation fails", async () => {
     const serviceWithFailingAdmission = new BundlerService({
       chainId: 167000,
-      entryPoints: [ENTRY_POINT_V08],
+      entryPoints: [ENTRY_POINT_V07],
       admissionSimulator: new RejectingAdmissionSimulator("AA23 reverted"),
     });
 
     await expect(
-      serviceWithFailingAdmission.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08),
+      serviceWithFailingAdmission.sendUserOperation(buildUserOperation(), ENTRY_POINT_V07),
     ).rejects.toThrow("validation failed");
     expect(serviceWithFailingAdmission.getPendingUserOperationsCount()).toBe(0);
   });
@@ -642,12 +636,12 @@ describe("BundlerService", () => {
   it("rejects user operation submissions when automatic submission is disabled", async () => {
     const readOnlyService = new BundlerService({
       chainId: 167000,
-      entryPoints: [ENTRY_POINT_V08],
+      entryPoints: [ENTRY_POINT_V07],
       acceptUserOperations: false,
     });
 
     await expect(
-      readOnlyService.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08),
+      readOnlyService.sendUserOperation(buildUserOperation(), ENTRY_POINT_V07),
     ).rejects.toThrow("Automatic submission is disabled");
   });
 
@@ -658,7 +652,7 @@ describe("BundlerService", () => {
       paymasterAndData: "0x9999999999999999999999999999999999999999abcd",
     });
 
-    const hashFromLegacy = await service.sendUserOperation(legacy, ENTRY_POINT_V08);
+    const hashFromLegacy = await service.sendUserOperation(legacy, ENTRY_POINT_V07);
     const hashFromPacked = await service.sendUserOperation(
       buildUserOperation({
         paymasterVerificationGasLimit: "0xea60",
@@ -670,7 +664,7 @@ describe("BundlerService", () => {
           paymasterData: "0xabcd",
         }),
       }),
-      ENTRY_POINT_V08,
+      ENTRY_POINT_V07,
     );
 
     expect(hashFromPacked).toBe(hashFromLegacy);
@@ -686,7 +680,7 @@ describe("BundlerService", () => {
           paymasterData: "0xabcd",
         }),
       }),
-      ENTRY_POINT_V08,
+      ENTRY_POINT_V07,
     );
 
     const lookup = service.getUserOperationByHash(hash);
@@ -696,7 +690,7 @@ describe("BundlerService", () => {
   });
 
   it("creates a bundle and publishes receipts after submission", async () => {
-    const userOpHash = await service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08);
+    const userOpHash = await service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V07);
     const bundle = service.createBundle(10);
 
     expect(bundle).not.toBeNull();
@@ -734,7 +728,7 @@ describe("BundlerService", () => {
   });
 
   it("stores failed bundle submission reason from revert metadata", async () => {
-    const userOpHash = await service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08);
+    const userOpHash = await service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V07);
     const bundle = service.createBundle(1);
     if (!bundle) {
       throw new Error("expected bundle to be created");
@@ -759,12 +753,12 @@ describe("BundlerService", () => {
 
   it("requeues the same userOp hash after a failed attempt", async () => {
     const userOp = buildUserOperation();
-    const userOpHash = await service.sendUserOperation(userOp, ENTRY_POINT_V08);
+    const userOpHash = await service.sendUserOperation(userOp, ENTRY_POINT_V07);
 
     service.markUserOperationFailed(userOpHash, "simulation_failed");
     expect(service.getPendingUserOperationsCount()).toBe(0);
 
-    const retriedHash = await service.sendUserOperation(userOp, ENTRY_POINT_V08);
+    const retriedHash = await service.sendUserOperation(userOp, ENTRY_POINT_V07);
     expect(retriedHash).toBe(userOpHash);
     expect(service.getPendingUserOperationsCount()).toBe(1);
     expect(service.getUserOperationReceipt(userOpHash)).toBeNull();
@@ -781,7 +775,7 @@ describe("BundlerService", () => {
         jsonrpc: "2.0",
         id: index,
         method: "eth_sendUserOperation",
-        params: [invalidUserOp, ENTRY_POINT_V08],
+        params: [invalidUserOp, ENTRY_POINT_V07],
       });
 
       expect(isErrorResponse(errorResponse)).toBe(true);
@@ -795,7 +789,7 @@ describe("BundlerService", () => {
         sender: "0x1111111111111111111111111111111111111111",
         nonce: "0x10",
       }),
-      ENTRY_POINT_V08,
+      ENTRY_POINT_V07,
     );
     expect(typeof acceptedHash).toBe("string");
   });
@@ -803,7 +797,7 @@ describe("BundlerService", () => {
   it("throttles after repeated deterministic validation failures", async () => {
     const throttledService = new BundlerService({
       chainId: 167000,
-      entryPoints: [ENTRY_POINT_V08],
+      entryPoints: [ENTRY_POINT_V07],
       reputationThrottleFailures: 3,
       reputationBanFailures: 5,
       throttleWindowMs: 60_000,
@@ -814,13 +808,13 @@ describe("BundlerService", () => {
       await expect(
         throttledService.sendUserOperation(
           buildUserOperation({ nonce: `0x${index + 1}` }),
-          ENTRY_POINT_V08,
+          ENTRY_POINT_V07,
         ),
       ).rejects.toThrow("validation failed");
     }
 
     await expect(
-      throttledService.sendUserOperation(buildUserOperation({ nonce: "0x10" }), ENTRY_POINT_V08),
+      throttledService.sendUserOperation(buildUserOperation({ nonce: "0x10" }), ENTRY_POINT_V07),
     ).rejects.toThrow("temporarily throttled");
   });
 
@@ -829,7 +823,7 @@ describe("BundlerService", () => {
     const firstService = new BundlerService(
       {
         chainId: 167000,
-        entryPoints: [ENTRY_POINT_V08, ENTRY_POINT_V07],
+        entryPoints: [ENTRY_POINT_V07, ENTRY_POINT_V06],
         reputationBanFailures: 3,
         reputationThrottleFailures: 2,
         throttleWindowMs: 1,
@@ -840,13 +834,13 @@ describe("BundlerService", () => {
     );
 
     const pendingUserOp = buildUserOperation({ nonce: "0x99" });
-    const pendingHash = await firstService.sendUserOperation(pendingUserOp, ENTRY_POINT_V08);
+    const pendingHash = await firstService.sendUserOperation(pendingUserOp, ENTRY_POINT_V07);
 
     const failingSender = "0x2222222222222222222222222222222222222222";
     for (let index = 0; index < 3; index += 1) {
       const hash = await firstService.sendUserOperation(
         buildUserOperation({ sender: failingSender, nonce: `0x${index + 1}` }),
-        ENTRY_POINT_V08,
+        ENTRY_POINT_V07,
       );
       firstService.markUserOperationFailed(hash, "simulation_failed");
       await new Promise((resolve) => setTimeout(resolve, 2));
@@ -855,7 +849,7 @@ describe("BundlerService", () => {
     const secondService = new BundlerService(
       {
         chainId: 167000,
-        entryPoints: [ENTRY_POINT_V08, ENTRY_POINT_V07],
+        entryPoints: [ENTRY_POINT_V07, ENTRY_POINT_V06],
         reputationBanFailures: 3,
         reputationThrottleFailures: 2,
         throttleWindowMs: 1,
@@ -865,7 +859,7 @@ describe("BundlerService", () => {
       persistence,
     );
 
-    expect(secondService.getUserOperationByHash(pendingHash)?.entryPoint).toBe(ENTRY_POINT_V08);
+    expect(secondService.getUserOperationByHash(pendingHash)?.entryPoint).toBe(ENTRY_POINT_V07);
     expect(secondService.getPendingUserOperationsCount()).toBe(1);
 
     await expect(
@@ -874,7 +868,7 @@ describe("BundlerService", () => {
           sender: failingSender,
           nonce: "0x10",
         }),
-        ENTRY_POINT_V08,
+        ENTRY_POINT_V07,
       ),
     ).rejects.toThrow("Sender is temporarily banned");
   });
@@ -884,12 +878,12 @@ describe("BundlerService", () => {
     const firstService = new BundlerService(
       {
         chainId: 167000,
-        entryPoints: [ENTRY_POINT_V08, ENTRY_POINT_V07],
+        entryPoints: [ENTRY_POINT_V07, ENTRY_POINT_V06],
       },
       persistence,
     );
 
-    const userOpHash = await firstService.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08);
+    const userOpHash = await firstService.sendUserOperation(buildUserOperation(), ENTRY_POINT_V07);
     const bundle = firstService.createBundle(1);
     if (!bundle) {
       throw new Error("expected bundle to be created");
@@ -908,7 +902,7 @@ describe("BundlerService", () => {
     const secondService = new BundlerService(
       {
         chainId: 167000,
-        entryPoints: [ENTRY_POINT_V08, ENTRY_POINT_V07],
+        entryPoints: [ENTRY_POINT_V07, ENTRY_POINT_V06],
       },
       persistence,
     );
@@ -929,7 +923,7 @@ describe("BundlerService", () => {
     const limitedService = new BundlerService(
       {
         chainId: 167000,
-        entryPoints: [ENTRY_POINT_V08],
+        entryPoints: [ENTRY_POINT_V07],
         maxFinalizedOperations: 2,
       },
       persistence,
@@ -947,7 +941,7 @@ describe("BundlerService", () => {
       for (const nonce of ["0x1", "0x2", "0x3"]) {
         const hash = await limitedService.sendUserOperation(
           buildUserOperation({ nonce }),
-          ENTRY_POINT_V08,
+          ENTRY_POINT_V07,
         );
         hashes.push(hash);
         limitedService.markUserOperationFailed(hash, `failed_${nonce}`);
@@ -980,7 +974,7 @@ describe("BundlerService", () => {
 describe("createBundlerApp", () => {
   it("serves JSON-RPC over /rpc", async () => {
     const service = new BundlerService({
-      entryPoints: [ENTRY_POINT_V08],
+      entryPoints: [ENTRY_POINT_V07],
     });
 
     const app = createBundlerApp(service);
@@ -1007,12 +1001,12 @@ describe("createBundlerApp", () => {
 
     expect(payload.jsonrpc).toBe("2.0");
     expect(payload.id).toBe(1);
-    expect(payload.result).toEqual([ENTRY_POINT_V08]);
+    expect(payload.result).toEqual([ENTRY_POINT_V07]);
   });
 
   it("returns HTTP 200 for JSON-RPC errors", async () => {
     const service = new BundlerService({
-      entryPoints: [ENTRY_POINT_V08],
+      entryPoints: [ENTRY_POINT_V07],
     });
     const app = createBundlerApp(service);
 

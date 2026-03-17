@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createPublicClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
-import { ServoRpcClient } from "./client.js";
+import { ServoClient } from "./client.js";
 import { createAndExecute } from "./flow.js";
 
 const runLive = process.env.RUN_HEKLA_INTEGRATION === "1";
@@ -38,12 +38,12 @@ describe.runIf(runLive && missing.length === 0)("sdk integration (live)", () => 
     const maxPriorityFeePerGas = BigInt(process.env.SDK_TEST_MAX_PRIORITY_FEE_PER_GAS as string);
     const chainId = Number.parseInt(process.env.SDK_TEST_CHAIN_ID as string, 10);
 
-    const rpcClient = new ServoRpcClient({ rpcUrl });
+    const client = new ServoClient({ rpcUrl });
     const publicClient = createPublicClient({ transport: http(chainRpcUrl) });
     const owner = privateKeyToAccount(ownerPrivateKey);
 
     const result = await createAndExecute({
-      rpcClient,
+      client,
       publicClient,
       owner,
       entryPoint,

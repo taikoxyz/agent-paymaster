@@ -334,10 +334,7 @@ const normalizeSupportedEntryPoints = (entryPoints: string[] | undefined): strin
   return resolved.map((entryPoint) => normalizeAddress(entryPoint, "supportedEntryPoints"));
 };
 
-const assertSupportedEntryPoint = (
-  entryPoint: string,
-  supportedEntryPoints: string[],
-): void => {
+const assertSupportedEntryPoint = (entryPoint: string, supportedEntryPoints: string[]): void => {
   if (supportedEntryPoints.includes(entryPoint)) {
     return;
   }
@@ -792,7 +789,8 @@ export class PaymasterService {
 
     const [userOperation, entryPoint, chainMaybe, contextMaybe] = params;
 
-    const permit = method === "pm_getPaymasterData" ? this.parsePermitContext(contextMaybe) : EMPTY_PERMIT;
+    const permit =
+      method === "pm_getPaymasterData" ? this.parsePermitContext(contextMaybe) : EMPTY_PERMIT;
 
     const quote = await this.quote(
       {

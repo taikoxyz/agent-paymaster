@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { ServoRpcClient } from "./client.js";
-import type { AgentPaymasterSdkError, JsonRpcRequestError, RateLimitError } from "./errors.js";
-import type { UserOperation } from "./types.js";
+import { ServoClient } from "./client.js";
 
 const ENTRY_POINT = "0x0000000071727de22e5e9d8baf0edac6f37da032";
 
-const SAMPLE_USER_OPERATION: UserOperation = {
+const SAMPLE_USER_OPERATION = {
   sender: "0x1111111111111111111111111111111111111111",
   nonce: "0x1",
   initCode: "0x",
@@ -17,57 +15,17 @@ const SAMPLE_USER_OPERATION: UserOperation = {
     "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb1b",
 };
 
-const makeResponse = (
-  body: unknown,
-  status = 200,
-  headers: Record<string, string> = {},
-): Response =>
+const makeResponse = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), {
     status,
-    headers: {
-      "Content-Type": "application/json",
-      ...headers,
-    },
+    headers: { "Content-Type": "application/json" },
   });
 
-describe("ServoRpcClient", () => {
-  it("sends eth_estimateUserOperationGas and returns typed result", async () => {
-    const calls: unknown[] = [];
-
-    const client = new ServoRpcClient({
-      rpcUrl: "http://localhost:3000/rpc",
-      fetchImpl: async (_input, init) => {
-        calls.push(JSON.parse(String(init?.body)) as unknown);
-
-        return makeResponse({
-          jsonrpc: "2.0",
-          id: 1,
-          result: {
-            callGasLimit: "0x88d8",
-            verificationGasLimit: "0x1d4c8",
-            preVerificationGas: "0x5274",
-            paymasterVerificationGasLimit: "0xea60",
-            paymasterPostOpGasLimit: "0xafc8",
-          },
-        });
-      },
-    });
-
-    const result = await client.estimateUserOperationGas(SAMPLE_USER_OPERATION, ENTRY_POINT);
-
-    expect(result.callGasLimit).toBe("0x88d8");
-    expect(calls).toHaveLength(1);
-    expect(calls[0]).toMatchObject({
-      jsonrpc: "2.0",
-      method: "eth_estimateUserOperationGas",
-      params: [SAMPLE_USER_OPERATION, ENTRY_POINT],
-    });
-  });
-
+describe("ServoClient", () => {
   it("sends pm_getPaymasterData with permit context", async () => {
     const calls: unknown[] = [];
 
-    const client = new ServoRpcClient({
+    const client = new ServoClient({
       rpcUrl: "http://localhost:3000/rpc",
       fetchImpl: async (_input, init) => {
         calls.push(JSON.parse(String(init?.body)) as unknown);
@@ -127,8 +85,8 @@ describe("ServoRpcClient", () => {
     });
   });
 
-  it("maps json-rpc error responses to JsonRpcRequestError", async () => {
-    const client = new ServoRpcClient({
+  it("maps json-rpc error responses to ServoError", async () => {
+    const client = new ServoClient({
       rpcUrl: "http://localhost:3000/rpc",
       fetchImpl: async () =>
         makeResponse(
@@ -138,9 +96,7 @@ describe("ServoRpcClient", () => {
             error: {
               code: -32602,
               message: "Missing required positional params",
-              data: {
-                reason: "params_missing",
-              },
+              data: { reason: "params_missing" },
             },
           },
           400,
@@ -149,58 +105,44 @@ describe("ServoRpcClient", () => {
 
     await expect(
       client.sendUserOperation(SAMPLE_USER_OPERATION, ENTRY_POINT),
-    ).rejects.toMatchObject<Partial<JsonRpcRequestError>>({
-      name: "JsonRpcRequestError",
-      rpcCode: -32602,
+    ).rejects.toMatchObject({
+      name: "ServoError",
+      code: -32602,
       message: "Missing required positional params",
-      status: 400,
     });
   });
 
-  it("maps rate-limited responses to RateLimitError", async () => {
-    const client = new ServoRpcClient({
+  it("throws ServoError on non-ok HTTP responses", async () => {
+    const client = new ServoClient({
       rpcUrl: "http://localhost:3000/rpc",
-      fetchImpl: async () =>
-        makeResponse(
-          {
-            error: {
-              message: "Rate limit exceeded",
-              limit: 1,
-              resetAt: 999,
-            },
-          },
-          429,
-          {
-            "X-RateLimit-Limit": "1",
-            "X-RateLimit-Reset": "999",
-          },
-        ),
+      fetchImpl: async () => makeResponse({ jsonrpc: "2.0", id: 1, result: null }, 500),
     });
 
     await expect(
       client.sendUserOperation(SAMPLE_USER_OPERATION, ENTRY_POINT),
-    ).rejects.toMatchObject<Partial<RateLimitError>>({
-      name: "RateLimitError",
-      status: 429,
-      limit: 1,
-      resetAt: 999,
+    ).rejects.toMatchObject({
+      name: "ServoError",
+      message: "HTTP 500",
     });
   });
 
-  it("rejects invalid JSON-RPC payloads", async () => {
-    const client = new ServoRpcClient({
+  it("throws ServoError on timeout", async () => {
+    const client = new ServoClient({
       rpcUrl: "http://localhost:3000/rpc",
-      fetchImpl: async () =>
-        makeResponse({
-          foo: "bar",
+      timeoutMs: 50,
+      fetchImpl: (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(new DOMException("The operation was aborted.", "AbortError")),
+          );
         }),
     });
 
-    await expect(client.supportedEntryPoints()).rejects.toMatchObject<
-      Partial<AgentPaymasterSdkError>
-    >({
-      name: "AgentPaymasterSdkError",
-      code: "invalid_response",
+    await expect(
+      client.sendUserOperation(SAMPLE_USER_OPERATION, ENTRY_POINT),
+    ).rejects.toMatchObject({
+      name: "ServoError",
+      message: "Request timeout after 50ms",
     });
-  });
+  }, 10_000);
 });

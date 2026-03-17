@@ -7,7 +7,7 @@ import { StaticPriceProvider } from "./paymaster-service.js";
 import { FixedWindowRateLimiter } from "./rate-limit.js";
 import type { JsonRpcRequest, JsonRpcResponse } from "./types.js";
 
-const ENTRY_POINT_V08 = "0x0000000071727de22e5e9d8baf0edac6f37da032";
+const ENTRY_POINT_V07 = "0x0000000071727de22e5e9d8baf0edac6f37da032";
 const TEST_QUOTE_SIGNER_PRIVATE_KEY = `0x${"2".repeat(64)}` as const;
 const TEST_PAYMASTER_ADDRESS = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const TEST_TOKEN_ADDRESS = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -48,7 +48,7 @@ class FakeBundlerClient implements BundlerClient {
       return {
         jsonrpc: "2.0",
         id: request.id,
-        result: [ENTRY_POINT_V08],
+        result: [ENTRY_POINT_V07],
       };
     }
 
@@ -195,7 +195,7 @@ describe("api gateway", () => {
     expect(response.status).toBe(200);
 
     const payload = await response.json();
-    expect(payload.result).toEqual([ENTRY_POINT_V08]);
+    expect(payload.result).toEqual([ENTRY_POINT_V07]);
     expect(bundlerClient.rpcCalls).toHaveLength(1);
     expect(bundlerClient.rpcCalls[0]?.method).toBe("eth_supportedEntryPoints");
   });
@@ -220,7 +220,7 @@ describe("api gateway", () => {
     expect(response.status).toBe(200);
 
     const payload = await response.json();
-    expect(payload.result).toEqual([ENTRY_POINT_V08]);
+    expect(payload.result).toEqual([ENTRY_POINT_V07]);
     expect(bundlerClient.rpcCalls).toHaveLength(0);
   });
 
@@ -244,7 +244,7 @@ describe("api gateway", () => {
     expect(response.status).toBe(200);
 
     const payload = await response.json();
-    expect(payload.result.supportedEntryPoints).toEqual([ENTRY_POINT_V08]);
+    expect(payload.result.supportedEntryPoints).toEqual([ENTRY_POINT_V07]);
     expect(payload.result.accountFactoryAddress).toBe(TEST_FACTORY_ADDRESS);
     expect(payload.result.permit).toEqual({
       standard: "EIP-2612",
@@ -267,7 +267,7 @@ describe("api gateway", () => {
         jsonrpc: "2.0",
         id: 7,
         method: "pm_getPaymasterData",
-        params: [SAMPLE_USER_OPERATION, ENTRY_POINT_V08, "taikoMainnet"],
+        params: [SAMPLE_USER_OPERATION, ENTRY_POINT_V07, "taikoMainnet"],
       }),
     });
 
@@ -311,7 +311,7 @@ describe("api gateway", () => {
     expect(payload.error.code).toBe(-32602);
     expect(payload.error.message).toBe("Unsupported entryPoint");
     expect(payload.error.data?.reason).toBe("entrypoint_unsupported");
-    expect(payload.error.data?.supportedEntryPoints).toEqual([ENTRY_POINT_V08]);
+    expect(payload.error.data?.supportedEntryPoints).toEqual([ENTRY_POINT_V07]);
     expect(bundlerClient.rpcCalls).toHaveLength(0);
   });
 
@@ -328,10 +328,7 @@ describe("api gateway", () => {
         jsonrpc: "2.0",
         id: 9,
         method: "eth_sendUserOperation",
-        params: [
-          SAMPLE_USER_OPERATION,
-          "0xDeaDDeaDDeaDDeaDDeaDDeaDDeaDDeaDDeaDDeaD",
-        ],
+        params: [SAMPLE_USER_OPERATION, "0xDeaDDeaDDeaDDeaDDeaDDeaDDeaDDeaDDeaDDeaD"],
       }),
     });
 
@@ -340,7 +337,7 @@ describe("api gateway", () => {
     expect(payload.error.code).toBe(-32602);
     expect(payload.error.message).toBe("Unsupported entryPoint");
     expect(payload.error.data?.reason).toBe("entrypoint_unsupported");
-    expect(payload.error.data?.supportedEntryPoints).toEqual([ENTRY_POINT_V08]);
+    expect(payload.error.data?.supportedEntryPoints).toEqual([ENTRY_POINT_V07]);
     expect(bundlerClient.rpcCalls).toHaveLength(0);
   });
 
@@ -384,7 +381,7 @@ describe("api gateway", () => {
     expect(response.status).toBe(200);
 
     const payload = await response.json();
-    expect(payload.supportedEntryPoints).toEqual([ENTRY_POINT_V08]);
+    expect(payload.supportedEntryPoints).toEqual([ENTRY_POINT_V07]);
     expect(payload.supportedTokens).toEqual([
       {
         symbol: "USDC",
@@ -527,7 +524,7 @@ describe("api gateway", () => {
         method: "pm_getPaymasterData",
         params: [
           SAMPLE_USER_OPERATION,
-          ENTRY_POINT_V08,
+          ENTRY_POINT_V07,
           "taikoMainnet",
           {
             permit: {
@@ -561,7 +558,7 @@ describe("api gateway", () => {
         method: "pm_getPaymasterData",
         params: [
           SAMPLE_USER_OPERATION,
-          ENTRY_POINT_V08,
+          ENTRY_POINT_V07,
           "taikoMainnet",
           {
             permit: {
@@ -594,7 +591,7 @@ describe("api gateway", () => {
         jsonrpc: "2.0",
         id: 11.5,
         method: "pm_getPaymasterData",
-        params: [SAMPLE_USER_OPERATION, ENTRY_POINT_V08, "taikoMainnet", { permit: "0xdeadbeef" }],
+        params: [SAMPLE_USER_OPERATION, ENTRY_POINT_V07, "taikoMainnet", { permit: "0xdeadbeef" }],
       }),
     });
 
@@ -624,7 +621,7 @@ describe("api gateway", () => {
         method: "pm_getPaymasterStubData",
         params: [
           SAMPLE_USER_OPERATION,
-          ENTRY_POINT_V08,
+          ENTRY_POINT_V07,
           "taikoMainnet",
           {
             permit: {
@@ -748,7 +745,7 @@ describe("api gateway", () => {
         jsonrpc: "2.0",
         id: 13,
         method: "pm_getPaymasterData",
-        params: [SAMPLE_USER_OPERATION, ENTRY_POINT_V08, "taikoMainnet"],
+        params: [SAMPLE_USER_OPERATION, ENTRY_POINT_V07, "taikoMainnet"],
       }),
     });
 

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
-import {PaymasterStub} from "../src/PaymasterStub.sol";
+import {PaymasterStub} from "./PaymasterStub.sol";
 
 contract PaymasterStubTest is Test {
     PaymasterStub stub;
