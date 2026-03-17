@@ -19,7 +19,13 @@ import {
   CompositePriceProvider,
   KrakenOracleSource,
 } from "./price-provider.js";
-import { FixedWindowRateLimiter, type RateLimitResult } from "./rate-limit.js";
+import {
+  EXPENSIVE_METHODS,
+  type FixedWindowRateLimiter,
+  LayeredRateLimiter,
+  type RateLimitResult,
+  SenderChurnTracker,
+} from "./rate-limit.js";
 import {
   type JsonRpcId,
   type JsonRpcResponse,
@@ -37,6 +43,12 @@ const RPC_RATE_LIMITED = -32005;
 interface RateLimitConfig {
   windowMs: number;
   maxRequestsPerWindow: number;
+  /** Per-sender limit within a window. Defaults to half of maxRequestsPerWindow. */
+  senderMaxRequestsPerWindow: number;
+  /** Global backstop across all callers. */
+  globalMaxRequestsPerWindow: number;
+  /** Per-IP budget for expensive methods (pm_*, estimation). */
+  expensiveMethodMaxRequestsPerWindow: number;
 }
 
 interface ApiConfig {
@@ -55,7 +67,8 @@ export interface CreateAppOptions {
   bundlerClient?: BundlerClient;
   paymasterService?: PaymasterService;
   metrics?: MetricsRegistry;
-  rateLimiter?: FixedWindowRateLimiter;
+  rateLimiter?: FixedWindowRateLimiter | LayeredRateLimiter;
+  senderChurnTracker?: SenderChurnTracker;
   /** Pass an EntryPointMonitor instance, or `null` to explicitly disable. */
   entryPointMonitor?: EntryPointMonitor | null;
 }
@@ -163,6 +176,18 @@ const resolveConfig = (environment: NodeJS.ProcessEnv = process.env): ApiConfig 
     rateLimit: {
       windowMs: parseIntWithFallback(environment.RATE_LIMIT_WINDOW_MS, 60_000),
       maxRequestsPerWindow: parseIntWithFallback(environment.RATE_LIMIT_MAX_REQUESTS, 60),
+      senderMaxRequestsPerWindow: parseIntWithFallback(
+        environment.RATE_LIMIT_SENDER_MAX_REQUESTS,
+        30,
+      ),
+      globalMaxRequestsPerWindow: parseIntWithFallback(
+        environment.RATE_LIMIT_GLOBAL_MAX_REQUESTS,
+        600,
+      ),
+      expensiveMethodMaxRequestsPerWindow: parseIntWithFallback(
+        environment.RATE_LIMIT_EXPENSIVE_METHOD_MAX_REQUESTS,
+        20,
+      ),
     },
     paymaster: {
       paymasterAddress: parseOptionalAddress(environment.PAYMASTER_ADDRESS),
@@ -341,10 +366,27 @@ export const createApp = (options: CreateAppOptions = {}): Hono => {
 
   const rateLimiter =
     options.rateLimiter ??
-    new FixedWindowRateLimiter({
-      maxRequestsPerWindow: mergedConfig.rateLimit.maxRequestsPerWindow,
-      windowMs: mergedConfig.rateLimit.windowMs,
+    new LayeredRateLimiter({
+      ip: {
+        maxRequestsPerWindow: mergedConfig.rateLimit.maxRequestsPerWindow,
+        windowMs: mergedConfig.rateLimit.windowMs,
+      },
+      sender: {
+        maxRequestsPerWindow: mergedConfig.rateLimit.senderMaxRequestsPerWindow,
+        windowMs: mergedConfig.rateLimit.windowMs,
+      },
+      global: {
+        maxRequestsPerWindow: mergedConfig.rateLimit.globalMaxRequestsPerWindow,
+        windowMs: mergedConfig.rateLimit.windowMs,
+      },
+      expensiveMethod: {
+        maxRequestsPerWindow: mergedConfig.rateLimit.expensiveMethodMaxRequestsPerWindow,
+        windowMs: mergedConfig.rateLimit.windowMs,
+      },
     });
+
+  const senderChurnTracker =
+    options.senderChurnTracker ?? new SenderChurnTracker(mergedConfig.rateLimit.windowMs);
 
   const entryPointMonitor =
     options.entryPointMonitor === null
@@ -471,20 +513,38 @@ export const createApp = (options: CreateAppOptions = {}): Hono => {
     }
 
     const sender = senderFromRpcPayload(payload);
-    const fallbackClientId =
+    const clientIp =
       getClientIdentifier(c.req.header("x-forwarded-for")) ??
       getClientIdentifier(c.req.header("cf-connecting-ip")) ??
       "anonymous";
 
-    const limiterKey = sender === null ? `ip:${fallbackClientId}` : `sender:${sender}`;
-    const rateLimitResult = rateLimiter.consume(limiterKey);
+    // Track sender churn telemetry
+    if (sender !== null) {
+      const churnCount = senderChurnTracker.record(clientIp, sender);
+      metrics.recordSenderChurn(clientIp, churnCount);
+    }
+
+    // Track expensive method pressure
+    if (EXPENSIVE_METHODS.has(payload.method)) {
+      metrics.recordExpensiveMethodRequest(payload.method);
+    }
+
+    // Layered rate limit: IP + sender + global + method budgets
+    const rateLimitResult =
+      rateLimiter instanceof LayeredRateLimiter
+        ? rateLimiter.consume({ ip: clientIp, sender, method: payload.method })
+        : rateLimiter.consume(sender === null ? `ip:${clientIp}` : `sender:${sender}`);
 
     if (!rateLimitResult.allowed) {
+      const layer: string =
+        "rejectedLayer" in rateLimitResult
+          ? String(rateLimitResult.rejectedLayer ?? "unknown")
+          : "single";
       const response = makeJsonRpcError(payload.id, RPC_RATE_LIMITED, "Rate limit exceeded", {
         limit: rateLimitResult.limit,
         resetAt: rateLimitResult.resetAt,
       });
-      metrics.recordRateLimit("/rpc");
+      metrics.recordRateLimit("/rpc", layer);
       metrics.recordRpc(payload.method, "error");
 
       const result = c.json(response, 200);

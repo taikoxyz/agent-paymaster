@@ -88,14 +88,27 @@ export class MetricsRegistry {
     );
   }
 
-  recordRateLimit(endpoint: string): void {
+  recordRateLimit(endpoint: string, layer = "single"): void {
     this.incrementCounter(
       "api_rate_limit_hits_total",
       {
         endpoint,
+        layer,
       },
       1,
     );
+  }
+
+  recordSenderChurn(ip: string, distinctSenders: number): void {
+    this.observeSummary(
+      "api_sender_churn_per_ip",
+      { ip: ip.length > 39 ? ip.slice(0, 39) : ip },
+      distinctSenders,
+    );
+  }
+
+  recordExpensiveMethodRequest(method: string): void {
+    this.incrementCounter("api_expensive_method_requests_total", { method }, 1);
   }
 
   recordQuote(chain: string, result: "ok" | "error"): void {
@@ -118,10 +131,15 @@ export class MetricsRegistry {
         help: "Total JSON-RPC requests handled by API gateway",
       },
       { name: "api_rate_limit_hits_total", help: "Total requests rejected by rate limiting" },
+      {
+        name: "api_expensive_method_requests_total",
+        help: "Total requests for expensive RPC methods",
+      },
       { name: "api_paymaster_quotes_total", help: "Total paymaster quote attempts" },
     ];
     const summaryMetadata: Array<{ name: string; help: string }> = [
       { name: "api_http_request_duration_ms", help: "API request durations in milliseconds" },
+      { name: "api_sender_churn_per_ip", help: "Distinct senders per IP per window" },
     ];
 
     for (const metric of counterMetadata) {

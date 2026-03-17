@@ -11,7 +11,7 @@ import { BundlerService } from "@agent-paymaster/bundler";
 import type { BundlerClient } from "./bundler-client.js";
 import { createApp } from "./index.js";
 import { StaticPriceProvider } from "./paymaster-service.js";
-import { FixedWindowRateLimiter } from "./rate-limit.js";
+import { FixedWindowRateLimiter, type LayeredRateLimiter } from "./rate-limit.js";
 import type { JsonRpcRequest, JsonRpcResponse, DependencyHealth } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -62,7 +62,7 @@ interface TestStack {
 }
 
 function createTestStack(options?: {
-  rateLimiter?: FixedWindowRateLimiter;
+  rateLimiter?: FixedWindowRateLimiter | LayeredRateLimiter;
   usdcPerEthMicros?: bigint;
   bundlerConfig?: ConstructorParameters<typeof BundlerService>[0];
 }): TestStack {
@@ -708,7 +708,12 @@ describe("load: bundler throughput", () => {
   });
 
   it("bundles and submits 50 operations in batches", async () => {
-    const stack = createTestStack();
+    const stack = createTestStack({
+      rateLimiter: new FixedWindowRateLimiter({
+        maxRequestsPerWindow: 10_000,
+        windowMs: 60_000,
+      }),
+    });
     const allHashes: string[] = [];
 
     // Submit 50 UserOps
@@ -756,7 +761,12 @@ describe("load: bundler throughput", () => {
   });
 
   it("handles concurrent gas estimations without interference", async () => {
-    const stack = createTestStack();
+    const stack = createTestStack({
+      rateLimiter: new FixedWindowRateLimiter({
+        maxRequestsPerWindow: 10_000,
+        windowMs: 60_000,
+      }),
+    });
 
     const estimations = Array.from({ length: 50 }, (_, i) =>
       estimateGas(
