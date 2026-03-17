@@ -37,7 +37,10 @@ async function rpc(method: string, params: unknown[]) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
   });
-  const json = (await res.json()) as { result?: unknown; error?: { message: string; code: number } };
+  const json = (await res.json()) as {
+    result?: unknown;
+    error?: { message: string; code: number };
+  };
   if (json.error) throw new Error(`RPC ${method}: ${json.error.message}`);
   return json.result;
 }
@@ -106,7 +109,9 @@ function computeUserOpHash(op: {
 async function main() {
   // 1. Build callData — call ping() on the smart account
   const callData = encodeFunctionData({
-    abi: [{ name: "ping", type: "function", inputs: [], outputs: [], stateMutability: "nonpayable" }],
+    abi: [
+      { name: "ping", type: "function", inputs: [], outputs: [], stateMutability: "nonpayable" },
+    ],
   });
 
   // 2. Get gas fees from chain
@@ -120,7 +125,18 @@ async function main() {
   // 3. Get nonce
   const nonce = await client.readContract({
     address: ENTRYPOINT,
-    abi: [{ name: "getNonce", type: "function", inputs: [{ name: "sender", type: "address" }, { name: "key", type: "uint192" }], outputs: [{ type: "uint256" }], stateMutability: "view" }],
+    abi: [
+      {
+        name: "getNonce",
+        type: "function",
+        inputs: [
+          { name: "sender", type: "address" },
+          { name: "key", type: "uint192" },
+        ],
+        outputs: [{ type: "uint256" }],
+        stateMutability: "view",
+      },
+    ],
     functionName: "getNonce",
     args: [SMART_ACCOUNT, 0n],
   });
@@ -133,6 +149,7 @@ async function main() {
     nonce: toHex(nonce),
     initCode: "0x",
     callData,
+    callGasLimit: toHex(55000n), // ping() needs ~45k; bundler default (35k) is too low
     maxFeePerGas: toHex(maxFeePerGas),
     maxPriorityFeePerGas: toHex(maxPriorityFeePerGas),
     signature: DUMMY_SIG,
@@ -140,12 +157,12 @@ async function main() {
   };
 
   console.log("\nRequesting paymaster quote...");
-  const pmData = await rpc("pm_getPaymasterData", [
+  const pmData = (await rpc("pm_getPaymasterData", [
     draftUserOp,
     ENTRYPOINT,
     "taikoMainnet",
     {},
-  ]) as Record<string, string>;
+  ])) as Record<string, string>;
 
   console.log("Quote received:");
   console.log("  Max USDC cost:", pmData.maxTokenCost);
@@ -198,7 +215,10 @@ async function main() {
   for (let i = 0; i < 60; i++) {
     await new Promise((r) => setTimeout(r, 3000));
     try {
-      const receipt = await rpc("eth_getUserOperationReceipt", [opHash]) as Record<string, unknown> | null;
+      const receipt = (await rpc("eth_getUserOperationReceipt", [opHash])) as Record<
+        string,
+        unknown
+      > | null;
       if (receipt) {
         const txReceipt = receipt.receipt as Record<string, string> | undefined;
         console.log("\n✅ UserOp confirmed on-chain!");

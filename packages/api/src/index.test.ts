@@ -34,10 +34,10 @@ class FakeBundlerClient implements BundlerClient {
         jsonrpc: "2.0",
         id: request.id,
         result: {
-          callGasLimit: "0x88d8",
+          callGasLimit: "0xd6f8",
           verificationGasLimit: "0x1d4c8",
           preVerificationGas: "0x5274",
-          paymasterVerificationGasLimit: "0xea60",
+          paymasterVerificationGasLimit: "0x1d4c0",
           paymasterPostOpGasLimit: "0x13880",
         },
       };

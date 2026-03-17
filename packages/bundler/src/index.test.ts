@@ -171,10 +171,10 @@ describe("BundlerService", () => {
       ENTRY_POINT_V08,
     );
 
-    expect(estimate.callGasLimit).toBe("0x88d8");
+    expect(estimate.callGasLimit).toBe("0xd6f8");
     expect(estimate.verificationGasLimit).toBe("0x1d4c8");
     expect(estimate.preVerificationGas).toBe("0x5274");
-    expect(estimate.paymasterVerificationGasLimit).toBe("0xea60");
+    expect(estimate.paymasterVerificationGasLimit).toBe("0x1d4c0");
     expect(estimate.paymasterPostOpGasLimit).toBe("0x13880");
   });
 
@@ -184,7 +184,7 @@ describe("BundlerService", () => {
       ENTRY_POINT_V08,
     );
 
-    expect(estimate.callGasLimit).toBe("0x88d8");
+    expect(estimate.callGasLimit).toBe("0xd6f8");
     expect(estimate.verificationGasLimit).toBe("0x1d4d8");
   });
 

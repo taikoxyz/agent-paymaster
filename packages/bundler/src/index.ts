@@ -373,14 +373,14 @@ export class BundlerService {
       acceptUserOperations: config.acceptUserOperations ?? true,
       reputationMaxFailures: config.reputationMaxFailures ?? 3,
       banWindowMs: config.banWindowMs ?? 5 * 60 * 1000,
-      baseCallGas: config.baseCallGas ?? 35_000n,
+      baseCallGas: config.baseCallGas ?? 55_000n,
       baseVerificationGas: config.baseVerificationGas ?? 120_000n,
       basePreVerificationGas: config.basePreVerificationGas ?? 21_000n,
       perByteCallDataGas: config.perByteCallDataGas ?? 16n,
       perByteVerificationGas: config.perByteVerificationGas ?? 4n,
       perBytePreVerificationGas: config.perBytePreVerificationGas ?? 4n,
       l1DataGasScalar: config.l1DataGasScalar ?? 1n,
-      paymasterVerificationGasLimit: config.paymasterVerificationGasLimit ?? 60_000n,
+      paymasterVerificationGasLimit: config.paymasterVerificationGasLimit ?? 120_000n,
       paymasterPostOpGasLimit: config.paymasterPostOpGasLimit ?? 80_000n,
     };
 
