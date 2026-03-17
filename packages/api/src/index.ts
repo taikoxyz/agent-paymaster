@@ -39,6 +39,7 @@ const RPC_PARSE_ERROR = -32700;
 const RPC_INVALID_REQUEST = -32600;
 const RPC_INTERNAL_ERROR = -32603;
 const RPC_RATE_LIMITED = -32005;
+const USER_OPERATION_SUBMISSION_METHODS = new Set(["eth_sendUserOperation"]);
 
 interface RateLimitConfig {
   windowMs: number;
@@ -196,6 +197,7 @@ const resolveConfig = (environment: NodeJS.ProcessEnv = process.env): ApiConfig 
       quoteSignerPrivateKey: environment.PAYMASTER_QUOTE_SIGNER_PRIVATE_KEY as
         | `0x${string}`
         | undefined,
+      accountFactoryAddress: parseOptionalAddress(environment.SERVO_ACCOUNT_FACTORY_ADDRESS),
       tokenAddresses,
       priceProvider,
     },
@@ -307,7 +309,14 @@ const applyRateLimitHeaders = (response: Response, result: RateLimitResult): voi
   response.headers.set("X-RateLimit-Reset", String(result.resetAt));
 };
 
-const KNOWN_ROUTES = new Set(["/health", "/status", "/metrics", "/openapi.json", "/rpc"]);
+const KNOWN_ROUTES = new Set([
+  "/health",
+  "/status",
+  "/capabilities",
+  "/metrics",
+  "/openapi.json",
+  "/rpc",
+]);
 
 const resolveRouteLabel = (path: string): string =>
   path === "/" ? "/" : KNOWN_ROUTES.has(path) ? path : "<unknown>";
@@ -483,6 +492,8 @@ export const createApp = (options: CreateAppOptions = {}): Hono => {
     });
   });
 
+  app.get("/capabilities", (c) => c.json(paymasterService.getCapabilities()));
+
   app.get("/metrics", (c) => {
     c.header("Content-Type", "text/plain; version=0.0.4");
     return c.body(metrics.renderPrometheus());
@@ -555,6 +566,12 @@ export const createApp = (options: CreateAppOptions = {}): Hono => {
     let rpcResponse: JsonRpcResponse;
 
     try {
+      if (USER_OPERATION_SUBMISSION_METHODS.has(payload.method)) {
+        const entryPointArg =
+          Array.isArray(payload.params) && payload.params.length >= 2 ? payload.params[1] : undefined;
+        paymasterService.validateUserOperationEntryPoint(entryPointArg, payload.method);
+      }
+
       if (payload.method.startsWith("pm_")) {
         const result = await paymasterService.handleRpc(payload.method, payload.params);
         rpcResponse = {

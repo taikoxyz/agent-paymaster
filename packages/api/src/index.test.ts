@@ -11,6 +11,7 @@ const ENTRY_POINT_V08 = "0x0000000071727de22e5e9d8baf0edac6f37da032";
 const TEST_QUOTE_SIGNER_PRIVATE_KEY = `0x${"2".repeat(64)}` as const;
 const TEST_PAYMASTER_ADDRESS = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const TEST_TOKEN_ADDRESS = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const TEST_FACTORY_ADDRESS = "0xcccccccccccccccccccccccccccccccccccccccc";
 
 const SAMPLE_USER_OPERATION = {
   sender: "0x1111111111111111111111111111111111111111",
@@ -104,6 +105,7 @@ const createTestApp = (
         priceProvider: new StaticPriceProvider(3_000_000_000n),
         quoteSignerPrivateKey: TEST_QUOTE_SIGNER_PRIVATE_KEY,
         paymasterAddress: TEST_PAYMASTER_ADDRESS,
+        accountFactoryAddress: TEST_FACTORY_ADDRESS,
         tokenAddresses: {
           taikoMainnet: TEST_TOKEN_ADDRESS,
           taikoHekla: TEST_TOKEN_ADDRESS,
@@ -151,6 +153,60 @@ describe("api gateway", () => {
     expect(payload.result).toEqual([ENTRY_POINT_V08]);
     expect(bundlerClient.rpcCalls).toHaveLength(1);
     expect(bundlerClient.rpcCalls[0]?.method).toBe("eth_supportedEntryPoints");
+  });
+
+  it("serves pm_supportedEntryPoints from paymaster service", async () => {
+    const bundlerClient = new FakeBundlerClient();
+    const app = createTestApp(bundlerClient);
+
+    const response = await app.request("/rpc", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "pm_supportedEntryPoints",
+        params: [],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+
+    const payload = await response.json();
+    expect(payload.result).toEqual([ENTRY_POINT_V08]);
+    expect(bundlerClient.rpcCalls).toHaveLength(0);
+  });
+
+  it("serves pm_getCapabilities from paymaster service", async () => {
+    const bundlerClient = new FakeBundlerClient();
+    const app = createTestApp(bundlerClient);
+
+    const response = await app.request("/rpc", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "pm_getCapabilities",
+        params: [],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+
+    const payload = await response.json();
+    expect(payload.result.supportedEntryPoints).toEqual([ENTRY_POINT_V08]);
+    expect(payload.result.accountFactoryAddress).toBe(TEST_FACTORY_ADDRESS);
+    expect(payload.result.permit).toEqual({
+      standard: "EIP-2612",
+      requiredForSponsoredQuote: true,
+      fields: ["value", "deadline", "signature"],
+    });
+    expect(bundlerClient.rpcCalls).toHaveLength(0);
   });
 
   it("serves pm_* methods from paymaster service via /rpc", async () => {
@@ -214,6 +270,35 @@ describe("api gateway", () => {
     expect(bundlerClient.rpcCalls).toHaveLength(0);
   });
 
+  it("rejects eth_sendUserOperation with unsupported entryPoint before forwarding", async () => {
+    const bundlerClient = new FakeBundlerClient();
+    const app = createTestApp(bundlerClient);
+
+    const response = await app.request("/rpc", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 9,
+        method: "eth_sendUserOperation",
+        params: [
+          SAMPLE_USER_OPERATION,
+          "0xDeaDDeaDDeaDDeaDDeaDDeaDDeaDDeaDDeaDDeaD",
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.error.code).toBe(-32602);
+    expect(payload.error.message).toBe("Unsupported entryPoint");
+    expect(payload.error.data?.reason).toBe("entrypoint_unsupported");
+    expect(payload.error.data?.supportedEntryPoints).toEqual([ENTRY_POINT_V08]);
+    expect(bundlerClient.rpcCalls).toHaveLength(0);
+  });
+
   it("exports metrics in Prometheus format", async () => {
     const bundlerClient = new FakeBundlerClient();
     const app = createTestApp(bundlerClient);
@@ -239,6 +324,28 @@ describe("api gateway", () => {
     const payload = await response.json();
     expect(payload.openapi).toBe("3.1.0");
     expect(payload.paths["/rpc"]).toBeDefined();
+  });
+
+  it("serves REST capabilities endpoint", async () => {
+    const bundlerClient = new FakeBundlerClient();
+    const app = createTestApp(bundlerClient);
+
+    const response = await app.request("/capabilities");
+    expect(response.status).toBe(200);
+
+    const payload = await response.json();
+    expect(payload.supportedEntryPoints).toEqual([ENTRY_POINT_V08]);
+    expect(payload.supportedTokens).toEqual([
+      {
+        symbol: "USDC",
+        addresses: {
+          taikoMainnet: TEST_TOKEN_ADDRESS,
+          taikoHekla: TEST_TOKEN_ADDRESS,
+          taikoHoodi: TEST_TOKEN_ADDRESS,
+        },
+      },
+    ]);
+    expect(payload.accountFactoryAddress).toBe(TEST_FACTORY_ADDRESS);
   });
 
   it("returns HTTP 200 for JSON-RPC errors", async () => {
@@ -422,6 +529,34 @@ describe("api gateway", () => {
     const payload = await response.json();
     expect(payload.error).toBeDefined();
     expect(payload.error.code).toBe(-32603);
+  });
+
+  it("pm_getPaymasterData rejects malformed permit context with structured error", async () => {
+    const bundlerClient = new FakeBundlerClient();
+    const app = createTestApp(bundlerClient);
+
+    const response = await app.request("/rpc", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 11.5,
+        method: "pm_getPaymasterData",
+        params: [SAMPLE_USER_OPERATION, ENTRY_POINT_V08, "taikoMainnet", { permit: "0xdeadbeef" }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+
+    const payload = await response.json();
+    expect(payload.error).toBeDefined();
+    expect(payload.error.code).toBe(-32602);
+    expect(payload.error.message).toBe("Invalid permit context");
+    expect(payload.error.data?.reason).toBe("permit_invalid");
+    expect(payload.error.data?.detail).toContain("context.permit must be an object");
+    expect(bundlerClient.rpcCalls).toHaveLength(0);
   });
 
   it("pm_getPaymasterStubData ignores permit context", async () => {

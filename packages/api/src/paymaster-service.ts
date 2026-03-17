@@ -43,6 +43,31 @@ interface PermitData {
   signature: `0x${string}`;
 }
 
+interface PaymasterCapabilityChain {
+  name: ChainName;
+  chainId: number;
+}
+
+interface PaymasterCapabilityToken {
+  symbol: "USDC";
+  addresses: Partial<Record<ChainName, string>>;
+}
+
+interface PaymasterPermitRequirements {
+  standard: "EIP-2612";
+  requiredForSponsoredQuote: true;
+  fields: ["value", "deadline", "signature"];
+}
+
+export interface PaymasterCapabilities {
+  supportedChains: PaymasterCapabilityChain[];
+  supportedEntryPoints: string[];
+  defaultEntryPoint: string | null;
+  supportedTokens: [PaymasterCapabilityToken];
+  accountFactoryAddress: string | null;
+  permit: PaymasterPermitRequirements;
+}
+
 interface SponsoredUserOperationMessage {
   sender: `0x${string}`;
   nonce: bigint;
@@ -149,6 +174,7 @@ export interface PaymasterServiceConfig {
   surchargeBps: number;
   quoteSignerPrivateKey: `0x${string}`;
   supportedEntryPoints: string[];
+  accountFactoryAddress: string | null;
   defaultPaymasterVerificationGasLimit: bigint;
   defaultPaymasterPostOpGasLimit: bigint;
   tokenAddresses: Partial<Record<ChainName, string>>;
@@ -157,9 +183,10 @@ export interface PaymasterServiceConfig {
 
 export type PaymasterServiceConfigInput = Omit<
   Partial<PaymasterServiceConfig>,
-  "tokenAddresses" | "priceProvider" | "supportedEntryPoints"
+  "tokenAddresses" | "priceProvider" | "supportedEntryPoints" | "accountFactoryAddress"
 > & {
   supportedEntryPoints?: string[];
+  accountFactoryAddress?: string;
   tokenAddresses?: Partial<Record<ChainName, string>>;
   priceProvider?: PriceProvider;
 };
@@ -465,6 +492,10 @@ export class PaymasterService {
       surchargeBps,
       quoteSignerPrivateKey,
       supportedEntryPoints,
+      accountFactoryAddress:
+        config.accountFactoryAddress !== undefined
+          ? normalizeAddress(config.accountFactoryAddress, "accountFactoryAddress")
+          : null,
       defaultPaymasterVerificationGasLimit:
         config.defaultPaymasterVerificationGasLimit ??
         OPERATIONAL_DEFAULTS.defaultPaymasterVerificationGasLimit,
@@ -492,6 +523,85 @@ export class PaymasterService {
       signerAddress: this.quoteSigner.address,
       priceSource: this.config.priceProvider.describe(),
     };
+  }
+
+  getSupportedEntryPoints(): string[] {
+    return [...this.config.supportedEntryPoints];
+  }
+
+  getCapabilities(): PaymasterCapabilities {
+    const supportedChains = CHAIN_CONFIGS.filter(
+      (chain) => this.config.tokenAddresses[chain.name] !== undefined,
+    );
+
+    return {
+      supportedChains,
+      supportedEntryPoints: this.getSupportedEntryPoints(),
+      defaultEntryPoint: this.config.supportedEntryPoints[0] ?? null,
+      supportedTokens: [
+        {
+          symbol: "USDC",
+          addresses: { ...this.config.tokenAddresses },
+        },
+      ],
+      accountFactoryAddress: this.config.accountFactoryAddress,
+      permit: {
+        standard: "EIP-2612",
+        requiredForSponsoredQuote: true,
+        fields: ["value", "deadline", "signature"],
+      },
+    };
+  }
+
+  validateUserOperationEntryPoint(entryPoint: unknown, method: string): string {
+    if (typeof entryPoint !== "string" || !ADDRESS_PATTERN.test(entryPoint)) {
+      throw new PaymasterRpcError(RPC_INVALID_PARAMS, "Invalid entryPoint", {
+        reason: "entrypoint_invalid",
+        method,
+      });
+    }
+
+    const normalizedEntryPoint = entryPoint.toLowerCase();
+    assertSupportedEntryPoint(normalizedEntryPoint, this.config.supportedEntryPoints);
+    return normalizedEntryPoint;
+  }
+
+  private parsePermitContext(contextMaybe: unknown): PermitData {
+    if (contextMaybe === undefined || contextMaybe === null) {
+      return EMPTY_PERMIT;
+    }
+
+    if (!isObject(contextMaybe)) {
+      throw new PaymasterRpcError(RPC_INVALID_PARAMS, "Invalid permit context", {
+        reason: "permit_invalid",
+        detail: "context must be an object",
+      });
+    }
+
+    if (!Object.hasOwn(contextMaybe, "permit")) {
+      return EMPTY_PERMIT;
+    }
+
+    if (!isObject(contextMaybe.permit)) {
+      throw new PaymasterRpcError(RPC_INVALID_PARAMS, "Invalid permit context", {
+        reason: "permit_invalid",
+        detail: "context.permit must be an object",
+      });
+    }
+
+    const permitCtx = contextMaybe.permit;
+    try {
+      return {
+        value: parseDecimalBigInt(permitCtx.value, "context.permit.value"),
+        deadline: parseDecimalBigInt(permitCtx.deadline, "context.permit.deadline"),
+        signature: parseBytes(permitCtx.signature, "context.permit.signature"),
+      };
+    } catch (error) {
+      throw new PaymasterRpcError(RPC_INVALID_PARAMS, "Invalid permit context", {
+        reason: "permit_invalid",
+        detail: error instanceof Error ? error.message : "permit parsing failed",
+      });
+    }
   }
 
   async quote(input: unknown, permit: PermitData = EMPTY_PERMIT): Promise<PaymasterQuote> {
@@ -656,7 +766,15 @@ export class PaymasterService {
     };
   }
 
-  async handleRpc(method: string, params: unknown): Promise<Record<string, unknown>> {
+  async handleRpc(method: string, params: unknown): Promise<unknown> {
+    if (method === "pm_supportedEntryPoints") {
+      return this.getSupportedEntryPoints();
+    }
+
+    if (method === "pm_getCapabilities") {
+      return this.getCapabilities();
+    }
+
     if (method !== "pm_getPaymasterData" && method !== "pm_getPaymasterStubData") {
       throw new Error(`Unsupported paymaster method: ${method}`);
     }
@@ -674,19 +792,7 @@ export class PaymasterService {
 
     const [userOperation, entryPoint, chainMaybe, contextMaybe] = params;
 
-    let permit: PermitData = EMPTY_PERMIT;
-    if (
-      method === "pm_getPaymasterData" &&
-      isObject(contextMaybe) &&
-      isObject(contextMaybe.permit)
-    ) {
-      const permitCtx = contextMaybe.permit;
-      permit = {
-        value: parseDecimalBigInt(permitCtx.value, "context.permit.value"),
-        deadline: parseDecimalBigInt(permitCtx.deadline, "context.permit.deadline"),
-        signature: parseBytes(permitCtx.signature, "context.permit.signature"),
-      };
-    }
+    const permit = method === "pm_getPaymasterData" ? this.parsePermitContext(contextMaybe) : EMPTY_PERMIT;
 
     const quote = await this.quote(
       {
