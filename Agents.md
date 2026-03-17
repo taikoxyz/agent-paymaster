@@ -26,7 +26,7 @@ packages/
   api/           → Hono HTTP gateway (quotes, RPC proxy, metrics)  :3000
   bundler/       → ERC-4337 bundler (mempool, auto-submitter, receipts)  :3001
   shared/        → Types, EIP-712 helpers, paymaster data packing
-  paymaster-contracts/ → Solidity (Foundry): TaikoUsdcPaymaster
+  paymaster-contracts/ → Solidity (Foundry): TaikoUsdcPaymaster, ServoAccount, ServoAccountFactory
   web/           → Next.js 15 landing page (Tailwind 4)
 ```
 
@@ -60,10 +60,13 @@ packages/
 
 - `TaikoUsdcPaymaster.sol` — main paymaster: quote validation, permit support, USDC settlement
 - `Permit4337Account.sol` — account-side permit helper
+- `ServoAccount.sol` — canonical single-owner ERC-4337 account with ERC-1271 permit validation
+- `ServoAccountFactory.sol` — deterministic CREATE2 factory for ServoAccount deployment and address derivation
 - `PaymasterStub.sol` — testing stub
 
 Contract tests: `cd packages/paymaster-contracts && forge test -vvv`
 Gas report: `forge test --gas-report`
+Factory deployment script: `script/DeployServoAccountFactory.s.sol`
 
 Submodules: `account-abstraction`, `openzeppelin-contracts`, `forge-std`. Clone with `--recurse-submodules`.
 
@@ -87,6 +90,12 @@ Optional bundler submission tuning:
 - `BUNDLER_MAX_OPERATIONS_PER_BUNDLE` — max claimed UserOps per bundle, default `1`
 - `BUNDLER_MAX_INFLIGHT_TRANSACTIONS` — max unconfirmed submitter txs, default `1`
 - `BUNDLER_TX_TIMEOUT_MS` — how long to keep tracking an unconfirmed tx before releasing its UserOps back to pending
+
+Contract deployment env vars/scripts:
+
+- `DEPLOYER_PRIVATE_KEY` — required by `forge script` deployments
+- `ENTRYPOINT_ADDRESS` — EntryPoint used by paymaster/factory deploy scripts
+- `TAIKO_HEKLA_RPC_URL` — RPC endpoint for Hekla deploy scripts (`deploy:taiko-hekla`, `deploy:factory:taiko-hekla`)
 
 ## Tech Stack
 

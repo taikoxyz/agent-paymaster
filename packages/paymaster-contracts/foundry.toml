@@ -18,3 +18,4 @@ remappings = [
 [rpc_endpoints]
 taiko_mainnet = "${TAIKO_MAINNET_RPC_URL}"
 taiko_hoodi = "${TAIKO_HOODI_RPC_URL}"
+taiko_hekla = "${TAIKO_HEKLA_RPC_URL}"
