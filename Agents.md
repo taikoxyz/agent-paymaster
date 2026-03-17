@@ -42,6 +42,8 @@ packages/
 6. UserOp executes
 7. Contract settles actual USDC cost in `_postOp`, refunds surplus
 
+Bundler lifecycle notes: pending and finalized UserOps are persisted in SQLite so receipt lookups survive restarts, failed hash-identical retries are requeued, and finalized retention is capped to keep memory bounded.
+
 **Key design decision**: pricing is off-chain (API signs bounded quotes), validation is on-chain (contract checks signature, never calls external oracles).
 
 ## API Endpoints
@@ -87,6 +89,7 @@ Optional bundler submission tuning:
 - `BUNDLER_MAX_OPERATIONS_PER_BUNDLE` — max claimed UserOps per bundle, default `1`
 - `BUNDLER_MAX_INFLIGHT_TRANSACTIONS` — max unconfirmed submitter txs, default `1`
 - `BUNDLER_TX_TIMEOUT_MS` — how long to keep tracking an unconfirmed tx before releasing its UserOps back to pending
+- `BUNDLER_MAX_FINALIZED_OPERATIONS` — max retained finalized UserOps, default `10000`
 
 ## Tech Stack
 
@@ -171,6 +174,7 @@ Vercel should use standard deployment protection (`prod_deployment_urls_and_all_
 | `BUNDLER_MAX_INFLIGHT_TRANSACTIONS` | 1       | Max submitter txs awaiting confirmation   |
 | `BUNDLER_BUNDLE_POLL_INTERVAL_MS`   | 5000    | Submission loop cadence                   |
 | `BUNDLER_TX_TIMEOUT_MS`             | 180000  | Release stale unconfirmed txs after 3 min |
+| `BUNDLER_MAX_FINALIZED_OPERATIONS`  | 10000   | Retained finalized UserOps (memory + DB)  |
 
 ## Networks
 

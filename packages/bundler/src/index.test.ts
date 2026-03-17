@@ -6,6 +6,7 @@ import {
   BundlerService,
   createBundlerApp,
   type BundlerPersistence,
+  type HexString,
   type UserOperation,
 } from "./index.js";
 
@@ -41,6 +42,23 @@ class FakeBundlerPersistence implements BundlerPersistence {
       state: "pending" | "submitting";
       submissionTxHash: HexString | null;
       submissionStartedAt: number | null;
+    }
+  >();
+  readonly finalizedOperations = new Map<
+    string,
+    {
+      entryPoint: HexString;
+      userOperation: UserOperation;
+      receivedAt: number;
+      state: "included" | "failed";
+      finalizedAt: number;
+      transactionHash: HexString | null;
+      blockNumber: number | null;
+      blockHash: HexString | null;
+      reason: string | null;
+      gasUsed: bigint | null;
+      gasCost: bigint | null;
+      effectiveGasPrice: bigint | null;
     }
   >();
   readonly senderReputations = new Map<string, { failures: number; bannedUntil: number | null }>();
@@ -117,6 +135,93 @@ class FakeBundlerPersistence implements BundlerPersistence {
       submissionTxHash: value.submissionTxHash,
       submissionStartedAt: value.submissionStartedAt,
     }));
+  }
+
+  saveFinalizedOperation(operation: {
+    hash: string;
+    entryPoint: HexString;
+    userOperation: UserOperation;
+    receivedAt: number;
+    state: "included" | "failed";
+    finalizedAt: number;
+    transactionHash: HexString | null;
+    blockNumber: number | null;
+    blockHash: HexString | null;
+    reason: string | null;
+    gasUsed: bigint | null;
+    gasCost: bigint | null;
+    effectiveGasPrice: bigint | null;
+  }): void {
+    this.finalizedOperations.set(operation.hash, {
+      entryPoint: operation.entryPoint,
+      userOperation: operation.userOperation,
+      receivedAt: operation.receivedAt,
+      state: operation.state,
+      finalizedAt: operation.finalizedAt,
+      transactionHash: operation.transactionHash,
+      blockNumber: operation.blockNumber,
+      blockHash: operation.blockHash,
+      reason: operation.reason,
+      gasUsed: operation.gasUsed,
+      gasCost: operation.gasCost,
+      effectiveGasPrice: operation.effectiveGasPrice,
+    });
+  }
+
+  deleteFinalizedOperation(hash: string): void {
+    this.finalizedOperations.delete(hash);
+  }
+
+  loadFinalizedOperations(): Array<{
+    hash: string;
+    entryPoint: HexString;
+    userOperation: UserOperation;
+    receivedAt: number;
+    state: "included" | "failed";
+    finalizedAt: number;
+    transactionHash: HexString | null;
+    blockNumber: number | null;
+    blockHash: HexString | null;
+    reason: string | null;
+    gasUsed: bigint | null;
+    gasCost: bigint | null;
+    effectiveGasPrice: bigint | null;
+  }> {
+    return [...this.finalizedOperations.entries()].map(([hash, value]) => ({
+      hash,
+      entryPoint: value.entryPoint,
+      userOperation: value.userOperation,
+      receivedAt: value.receivedAt,
+      state: value.state,
+      finalizedAt: value.finalizedAt,
+      transactionHash: value.transactionHash,
+      blockNumber: value.blockNumber,
+      blockHash: value.blockHash,
+      reason: value.reason,
+      gasUsed: value.gasUsed,
+      gasCost: value.gasCost,
+      effectiveGasPrice: value.effectiveGasPrice,
+    }));
+  }
+
+  pruneFinalizedOperations(maxEntries: number): string[] {
+    if (!Number.isInteger(maxEntries) || maxEntries <= 0) {
+      return [];
+    }
+
+    const finalized = [...this.finalizedOperations.entries()]
+      .map(([hash, value]) => ({
+        hash,
+        finalizedAt: value.finalizedAt,
+      }))
+      .sort((left, right) => right.finalizedAt - left.finalizedAt);
+
+    const deleted = finalized.slice(maxEntries).map((entry) => entry.hash);
+    for (const hash of deleted) {
+      this.finalizedOperations.delete(hash);
+    }
+
+    return deleted;
   }
 
   saveSenderReputation(sender: string, failures: number, bannedUntil: number | null): void {
@@ -361,6 +466,7 @@ describe("BundlerService", () => {
     service.markBundleSubmitted(bundle?.bundleHash ?? "", {
       transactionHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       blockNumber: 99,
+      blockHash: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       effectiveGasPrice: "0x10",
       gasUsed: "0x1000",
       gasCost: "0x10000",
@@ -374,12 +480,18 @@ describe("BundlerService", () => {
       "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     );
     expect(lookup?.blockNumber).toBe("0x63");
+    expect(lookup?.blockHash).toBe(
+      "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    );
     expect(receipt?.success).toBe(true);
     expect(receipt?.actualGasUsed).toBe("0x1000");
     expect(receipt?.actualGasCost).toBe("0x10000");
     expect(receipt?.receipt.effectiveGasPrice).toBe("0x10");
     expect(receipt?.receipt.status).toBe("0x1");
     expect(receipt?.receipt.blockNumber).toBe("0x63");
+    expect(receipt?.receipt.blockHash).toBe(
+      "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    );
   });
 
   it("stores failed bundle submission reason from revert metadata", () => {
@@ -392,6 +504,7 @@ describe("BundlerService", () => {
     service.markBundleSubmitted(bundle.bundleHash, {
       transactionHash: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       blockNumber: 100,
+      blockHash: "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
       gasUsed: "0x2000",
       gasCost: "0x40000",
       success: false,
@@ -403,6 +516,19 @@ describe("BundlerService", () => {
     expect(receipt?.success).toBe(false);
     expect(receipt?.reason).toBe("AA23 reverted");
     expect(receipt?.receipt.status).toBe("0x0");
+  });
+
+  it("requeues the same userOp hash after a failed attempt", () => {
+    const userOp = buildUserOperation();
+    const userOpHash = service.sendUserOperation(userOp, ENTRY_POINT_V08);
+
+    service.markUserOperationFailed(userOpHash, "simulation_failed");
+    expect(service.getPendingUserOperationsCount()).toBe(0);
+
+    const retriedHash = service.sendUserOperation(userOp, ENTRY_POINT_V08);
+    expect(retriedHash).toBe(userOpHash);
+    expect(service.getPendingUserOperationsCount()).toBe(1);
+    expect(service.getUserOperationReceipt(userOpHash)).toBeNull();
   });
 
   it("bans senders after repeated invalid user operations", () => {
@@ -489,6 +615,89 @@ describe("BundlerService", () => {
         ENTRY_POINT_V08,
       ),
     ).toThrow("Sender is temporarily banned");
+  });
+
+  it("reloads finalized operation receipts from persistence", () => {
+    const persistence = new FakeBundlerPersistence();
+    const firstService = new BundlerService(
+      {
+        chainId: 167000,
+        entryPoints: [ENTRY_POINT_V08, ENTRY_POINT_V07],
+      },
+      persistence,
+    );
+
+    const userOpHash = firstService.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08);
+    const bundle = firstService.createBundle(1);
+    if (!bundle) {
+      throw new Error("expected bundle to be created");
+    }
+
+    firstService.markBundleSubmitted(bundle.bundleHash, {
+      transactionHash: "0xabababababababababababababababababababababababababababababababab",
+      blockNumber: 321,
+      blockHash: "0xefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      gasUsed: "0x55",
+      gasCost: "0xaa",
+      effectiveGasPrice: "0x2",
+      success: true,
+    });
+
+    const secondService = new BundlerService(
+      {
+        chainId: 167000,
+        entryPoints: [ENTRY_POINT_V08, ENTRY_POINT_V07],
+      },
+      persistence,
+    );
+
+    const lookup = secondService.getUserOperationByHash(userOpHash);
+    const receipt = secondService.getUserOperationReceipt(userOpHash);
+    expect(lookup?.blockHash).toBe(
+      "0xefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+    );
+    expect(receipt?.receipt.blockHash).toBe(
+      "0xefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+    );
+    expect(receipt?.actualGasUsed).toBe("0x55");
+  });
+
+  it("prunes oldest finalized operations when retention limit is exceeded", () => {
+    const persistence = new FakeBundlerPersistence();
+    const limitedService = new BundlerService(
+      {
+        chainId: 167000,
+        entryPoints: [ENTRY_POINT_V08],
+        maxFinalizedOperations: 2,
+      },
+      persistence,
+    );
+
+    const originalDateNow = Date.now;
+    let now = 1_700_000_000_000;
+    Date.now = () => {
+      now += 1;
+      return now;
+    };
+
+    const hashes: string[] = [];
+    try {
+      for (const nonce of ["0x1", "0x2", "0x3"]) {
+        const hash = limitedService.sendUserOperation(
+          buildUserOperation({ nonce }),
+          ENTRY_POINT_V08,
+        );
+        hashes.push(hash);
+        limitedService.markUserOperationFailed(hash, `failed_${nonce}`);
+      }
+    } finally {
+      Date.now = originalDateNow;
+    }
+
+    expect(persistence.finalizedOperations.size).toBe(2);
+    expect(limitedService.getUserOperationByHash(hashes[0])).toBeNull();
+    expect(limitedService.getUserOperationByHash(hashes[1])).not.toBeNull();
+    expect(limitedService.getUserOperationByHash(hashes[2])).not.toBeNull();
   });
 
   it("returns json-rpc method not found for unknown methods", () => {

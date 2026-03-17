@@ -187,6 +187,51 @@ class FakePersistence implements BundlerPersistence {
     }));
   }
 
+  saveFinalizedOperation(operation: {
+    hash: string;
+    entryPoint: HexString;
+    userOperation: UserOperation;
+    receivedAt: number;
+    state: "included" | "failed";
+    finalizedAt: number;
+    transactionHash: HexString | null;
+    blockNumber: number | null;
+    blockHash: HexString | null;
+    reason: string | null;
+    gasUsed: bigint | null;
+    gasCost: bigint | null;
+    effectiveGasPrice: bigint | null;
+  }): void {
+    void operation;
+  }
+
+  deleteFinalizedOperation(hash: string): void {
+    void hash;
+  }
+
+  loadFinalizedOperations(): Array<{
+    hash: string;
+    entryPoint: HexString;
+    userOperation: UserOperation;
+    receivedAt: number;
+    state: "included" | "failed";
+    finalizedAt: number;
+    transactionHash: HexString | null;
+    blockNumber: number | null;
+    blockHash: HexString | null;
+    reason: string | null;
+    gasUsed: bigint | null;
+    gasCost: bigint | null;
+    effectiveGasPrice: bigint | null;
+  }> {
+    return [];
+  }
+
+  pruneFinalizedOperations(maxEntries: number): string[] {
+    void maxEntries;
+    return [];
+  }
+
   saveSenderReputation(sender: string, failures: number, bannedUntil: number | null): void {
     void sender;
     void failures;
@@ -303,6 +348,7 @@ describe("BundlerSubmitter", () => {
     client.receipts.set(client.nextTransactionHash, {
       transactionHash: client.nextTransactionHash,
       blockNumber: 123n,
+      blockHash: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       status: "success",
       effectiveGasPrice: 4n,
       logs: [
