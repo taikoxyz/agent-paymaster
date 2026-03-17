@@ -29,11 +29,11 @@ All methods go through the single `/rpc` endpoint using standard [ERC-7677](http
 
 The agent holds USDC but no ETH. The entire gas payment happens in USDC through four phases:
 
-**1. Estimate** — The agent calls `pm_getPaymasterStubData` with a draft UserOperation. The API estimates gas via the bundler, converts the ETH cost to USDC using a composite price oracle (Chainlink primary, Coinbase + Kraken fallback), applies a surcharge (default 5%), and returns a USDC cost estimate.
+**1. Estimate** — The agent calls `pm_getPaymasterStubData` with a draft UserOperation. The API estimates gas via the bundler, and the bundler combines heuristic sizing with EntryPoint `simulateValidation` pre-op gas (against the configured Taiko RPC + EntryPoint). The API then converts the ETH cost to USDC using a composite price oracle (Chainlink primary, Coinbase + Kraken fallback), applies a surcharge (default 5%), and returns a USDC cost estimate.
 
 **2. Quote** — The agent signs an [EIP-2612 USDC permit](https://eips.ethereum.org/EIPS/eip-2612) for the quoted amount and calls `pm_getPaymasterData` with the permit attached. The API returns EIP-712 signed paymaster fields that the agent attaches to the UserOperation.
 
-**3. Submission** — The agent signs the final UserOperation and submits it via `eth_sendUserOperation`. The bundler validates it, stores it in the mempool, and a background submitter loop simulates and forwards it to `handleOps` on-chain. Finalized operation metadata is persisted so `eth_getUserOperationByHash` / `eth_getUserOperationReceipt` survive restarts, and exact-hash retries are requeued after failed attempts. The bundler pays ETH gas upfront.
+**3. Submission** — The agent signs the final UserOperation and submits it via `eth_sendUserOperation`. The bundler validates it, stores it in the mempool, and a background submitter loop simulates and forwards it to `handleOps` on-chain. Finalized operation metadata is persisted so `eth_getUserOperationByHash` / `eth_getUserOperationReceipt` survive restarts, and exact-hash retries are requeued after failed attempts. The bundler pays ETH gas upfront and emits estimate-vs-actual gas drift events when operations finalize.
 
 **4. On-chain settlement** — The EntryPoint calls the paymaster contract, which verifies the quote signature, executes the USDC permit, and locks `maxTokenCost` USDC from the agent. After the agent's transaction executes, the contract settles the actual gas cost in USDC and refunds any surplus back to the agent.
 
@@ -41,14 +41,14 @@ The agent holds USDC but no ETH. The entire gas payment happens in USDC through 
 
 ## Packages
 
-| Package                                | Description                                                                  |
-| -------------------------------------- | ---------------------------------------------------------------------------- |
-| `@agent-paymaster/api`                 | Hono API — quotes, RPC gateway, rate limiting                                |
-| `@agent-paymaster/bundler`             | ERC-4337 bundler — gas estimation, mempool, automatic submission             |
-| `@agent-paymaster/shared`              | Shared types and EIP-712 helpers                                             |
-| `@agent-paymaster/sdk`                 | TypeScript SDK for counterfactual account + permit + UserOp flow             |
-| `@agent-paymaster/paymaster-contracts` | TaikoUsdcPaymaster + ServoAccount + ServoAccountFactory (Solidity / Foundry) |
-| `@agent-paymaster/web`                 | Next.js landing page                                                         |
+| Package                                | Description                                                                        |
+| -------------------------------------- | ---------------------------------------------------------------------------------- |
+| `@agent-paymaster/api`                 | Hono API — quotes, RPC gateway, rate limiting                                      |
+| `@agent-paymaster/bundler`             | ERC-4337 bundler — simulation-backed gas estimation, mempool, automatic submission |
+| `@agent-paymaster/shared`              | Shared types and EIP-712 helpers                                                   |
+| `@agent-paymaster/sdk`                 | TypeScript SDK for counterfactual account + permit + UserOp flow                   |
+| `@agent-paymaster/paymaster-contracts` | TaikoUsdcPaymaster + ServoAccount + ServoAccountFactory (Solidity / Foundry)       |
+| `@agent-paymaster/web`                 | Next.js landing page                                                               |
 
 ## Quick start
 
@@ -68,7 +68,8 @@ For write-capable bundler behavior, set `BUNDLER_SUBMITTER_PRIVATE_KEY`. If it i
 
 Optional submission tuning:
 
-- `BUNDLER_CHAIN_RPC_URL` overrides the Taiko RPC used for `handleOps` submission.
+- `BUNDLER_CHAIN_ID` selects the target Taiko chain for bundler hashing + viem chain context (default `167000`).
+- `BUNDLER_CHAIN_RPC_URL` overrides the Taiko RPC used for both `simulateValidation` gas estimation and `handleOps` submission.
 - `BUNDLER_MAX_OPERATIONS_PER_BUNDLE` defaults to `1` for conservative single-op bundles.
 - `BUNDLER_MAX_INFLIGHT_TRANSACTIONS` defaults to `1` to keep nonce management simple and predictable.
 - `BUNDLER_BUNDLE_POLL_INTERVAL_MS` defaults to `5000`.

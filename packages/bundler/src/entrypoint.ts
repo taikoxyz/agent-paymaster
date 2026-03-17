@@ -3,6 +3,7 @@ import {
   ContractFunctionRevertedError,
   concatHex,
   decodeAbiParameters,
+  decodeErrorResult,
   decodeEventLog,
   encodeAbiParameters,
   keccak256,
@@ -45,6 +46,12 @@ export const ENTRY_POINT_ABI = parseAbi([
   "error FailedOp(uint256 opIndex, string reason)",
   "error FailedOpWithRevert(uint256 opIndex, string reason, bytes inner)",
   "error PostOpReverted(bytes returnData)",
+]);
+
+export const ENTRY_POINT_SIMULATION_ABI = parseAbi([
+  "function simulateValidation((address sender,uint256 nonce,bytes initCode,bytes callData,bytes32 accountGasLimits,uint256 preVerificationGas,bytes32 gasFees,bytes paymasterAndData,bytes signature) userOp)",
+  "error ValidationResult((uint256 preOpGas,uint256 prefund,bool sigFailed,uint48 validAfter,uint48 validUntil,bytes paymasterContext) returnInfo,(uint256 stake,uint256 unstakeDelaySec) senderInfo,(uint256 stake,uint256 unstakeDelaySec) factoryInfo,(uint256 stake,uint256 unstakeDelaySec) paymasterInfo)",
+  "error ValidationResultWithAggregation((uint256 preOpGas,uint256 prefund,bool sigFailed,uint48 validAfter,uint48 validUntil,bytes paymasterContext) returnInfo,(uint256 stake,uint256 unstakeDelaySec) senderInfo,(uint256 stake,uint256 unstakeDelaySec) factoryInfo,(uint256 stake,uint256 unstakeDelaySec) paymasterInfo,(address aggregator,(uint256 stake,uint256 unstakeDelaySec) stakeInfo) aggregatorInfo)",
 ]);
 
 const ERROR_STRING_SELECTOR = "0x08c379a0";
@@ -148,6 +155,56 @@ export const extractBundlerErrorReason = (error: unknown): string => {
   }
 
   return String(error);
+};
+
+const decodeSimulationRevertData = (payload: HexString): bigint | null => {
+  try {
+    const decoded = decodeErrorResult({
+      abi: ENTRY_POINT_SIMULATION_ABI,
+      data: payload,
+    });
+    const firstArg = decoded.args[0];
+    if (!firstArg || typeof firstArg !== "object" || !("preOpGas" in firstArg)) {
+      return null;
+    }
+
+    const preOpGas = firstArg.preOpGas;
+    return typeof preOpGas === "bigint" ? preOpGas : null;
+  } catch {
+    return null;
+  }
+};
+
+export const extractSimulationPreOpGas = (error: unknown): bigint | null => {
+  if (error instanceof BaseError) {
+    const reverted = error.walk(
+      (candidate) => candidate instanceof ContractFunctionRevertedError,
+    ) as ContractFunctionRevertedError | null;
+
+    if (!reverted || reverted.data === undefined) {
+      return null;
+    }
+
+    const revertData = reverted.data as unknown;
+
+    if (typeof revertData === "string" && revertData.startsWith("0x")) {
+      return decodeSimulationRevertData(revertData as HexString);
+    }
+
+    if (
+      typeof revertData === "object" &&
+      revertData !== null &&
+      "data" in revertData &&
+      typeof revertData.data === "string" &&
+      revertData.data.startsWith("0x")
+    ) {
+      return decodeSimulationRevertData(revertData.data as HexString);
+    }
+
+    return null;
+  }
+
+  return null;
 };
 
 export const collectUserOperationExecutions = (

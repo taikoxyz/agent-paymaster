@@ -6,9 +6,15 @@ import {
 import { serve } from "@hono/node-server";
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
-import { taiko } from "viem/chains";
+import { createPublicClient, http, type Chain } from "viem";
+import { taiko, taikoHekla, taikoHoodi } from "viem/chains";
 
-import { buildCanonicalUserOpHash } from "./entrypoint.js";
+import {
+  buildCanonicalUserOpHash,
+  ENTRY_POINT_SIMULATION_ABI,
+  extractSimulationPreOpGas,
+  packUserOperation,
+} from "./entrypoint.js";
 import { logEvent } from "./logger.js";
 import { BundlerPersistenceStore } from "./persistence.js";
 import { type BundlerSubmitterHealth, BundlerSubmitter } from "./submitter.js";
@@ -136,6 +142,7 @@ interface StoredUserOperation {
   userOperation: UserOperation;
   entryPoint: HexString;
   receivedAt: number;
+  estimatedGasLimit: bigint | null;
   state: "pending" | "submitting" | "included" | "failed";
   bundleHash: string | null;
   submissionTxHash: HexString | null;
@@ -234,6 +241,7 @@ interface BundlerConfigInput {
   paymasterVerificationGasLimit?: bigint;
   paymasterPostOpGasLimit?: bigint;
   maxFinalizedOperations?: number;
+  gasSimulator?: GasSimulator;
 }
 
 interface BundlerConfig {
@@ -252,6 +260,14 @@ interface BundlerConfig {
   paymasterVerificationGasLimit: bigint;
   paymasterPostOpGasLimit: bigint;
   maxFinalizedOperations: number;
+}
+
+export interface GasSimulator {
+  estimatePreOpGas(
+    userOperation: UserOperation,
+    entryPoint: HexString,
+    baseline: UserOperationGasEstimate,
+  ): Promise<bigint>;
 }
 
 interface SendUserOperationParamsInput {
@@ -396,6 +412,64 @@ const parsePositiveIntegerWithFallback = (value: string | undefined, fallback: n
   return parsed;
 };
 
+const resolveChainById = (chainId: number): Chain | undefined => {
+  switch (chainId) {
+    case 167000:
+      return taiko;
+    case 167009:
+      return taikoHekla;
+    case 167013:
+      return taikoHoodi;
+    default:
+      return undefined;
+  }
+};
+
+export class ViemGasSimulator implements GasSimulator {
+  private readonly publicClient;
+
+  constructor(rpcUrl: string, chain?: Chain) {
+    this.publicClient = createPublicClient({
+      chain,
+      transport: http(rpcUrl),
+    });
+  }
+
+  async estimatePreOpGas(
+    userOperation: UserOperation,
+    entryPoint: HexString,
+    baseline: UserOperationGasEstimate,
+  ): Promise<bigint> {
+    const simulationUserOperation: UserOperation = {
+      ...userOperation,
+      callGasLimit: baseline.callGasLimit,
+      verificationGasLimit: baseline.verificationGasLimit,
+      preVerificationGas: baseline.preVerificationGas,
+      paymasterVerificationGasLimit: baseline.paymasterVerificationGasLimit,
+      paymasterPostOpGasLimit: baseline.paymasterPostOpGasLimit,
+      paymasterAndData: userOperation.paymasterAndData ?? "0x",
+    };
+
+    try {
+      await this.publicClient.simulateContract({
+        address: entryPoint,
+        abi: ENTRY_POINT_SIMULATION_ABI,
+        functionName: "simulateValidation",
+        args: [packUserOperation(simulationUserOperation)],
+      });
+    } catch (error) {
+      const preOpGas = extractSimulationPreOpGas(error);
+      if (preOpGas !== null) {
+        return preOpGas;
+      }
+
+      throw error;
+    }
+
+    throw new Error("simulateValidation unexpectedly succeeded without revert");
+  }
+}
+
 export class BundlerService {
   readonly config: BundlerConfig;
 
@@ -403,6 +477,7 @@ export class BundlerService {
   private readonly bundles = new Map<string, string[]>();
   private readonly senderReputation = new Map<string, SenderReputation>();
   private readonly persistence?: BundlerPersistence;
+  private readonly gasSimulator?: GasSimulator;
   private bundleSequence = 0;
 
   constructor(config: BundlerConfigInput = {}, persistence?: BundlerPersistence) {
@@ -426,6 +501,7 @@ export class BundlerService {
       paymasterPostOpGasLimit: config.paymasterPostOpGasLimit ?? 80_000n,
       maxFinalizedOperations: config.maxFinalizedOperations ?? 10_000,
     };
+    this.gasSimulator = config.gasSimulator;
 
     this.persistence = persistence;
 
@@ -438,9 +514,7 @@ export class BundlerService {
     persistence.deleteExpiredSenderReputations();
 
     for (const entry of persistence.loadPendingOperations()) {
-      this.userOperations.set(
-        entry.hash,
-        this.createStoredOperation({
+      const stored = this.createStoredOperation({
           hash: entry.hash,
           userOperation: entry.userOperation,
           entryPoint: entry.entryPoint,
@@ -448,14 +522,13 @@ export class BundlerService {
           state: entry.state,
           submissionTxHash: entry.submissionTxHash,
           submissionStartedAt: entry.submissionStartedAt,
-        }),
-      );
+        });
+      stored.estimatedGasLimit = this.getDeclaredGasLimit(entry.userOperation);
+      this.userOperations.set(entry.hash, stored);
     }
 
     for (const entry of persistence.loadFinalizedOperations()) {
-      this.userOperations.set(
-        entry.hash,
-        this.createStoredOperation({
+      const stored = this.createStoredOperation({
           hash: entry.hash,
           userOperation: entry.userOperation,
           entryPoint: entry.entryPoint,
@@ -469,8 +542,9 @@ export class BundlerService {
           gasCost: entry.gasCost,
           effectiveGasPrice: entry.effectiveGasPrice,
           finalizedAt: entry.finalizedAt,
-        }),
-      );
+        });
+      stored.estimatedGasLimit = this.getDeclaredGasLimit(entry.userOperation);
+      this.userOperations.set(entry.hash, stored);
     }
 
     for (const reputation of persistence.loadSenderReputations()) {
@@ -564,10 +638,10 @@ export class BundlerService {
     return [...this.config.entryPoints];
   }
 
-  estimateUserOperationGas(
+  async estimateUserOperationGas(
     userOperationInput: unknown,
     entryPointInput: unknown,
-  ): UserOperationGasEstimate {
+  ): Promise<UserOperationGasEstimate> {
     const userOperation = this.parseUserOperation(userOperationInput);
     const entryPoint = this.parseEntryPoint(entryPointInput);
 
@@ -581,7 +655,7 @@ export class BundlerService {
         ? hexToBigInt(userOperation.callGasLimit)
         : this.config.baseCallGas + callDataBytes * this.config.perByteCallDataGas;
 
-    const verificationGasLimit =
+    let verificationGasLimit =
       userOperation.verificationGasLimit !== undefined
         ? hexToBigInt(userOperation.verificationGasLimit)
         : this.config.baseVerificationGas +
@@ -596,6 +670,36 @@ export class BundlerService {
         : this.config.basePreVerificationGas +
           callDataBytes * this.config.perBytePreVerificationGas +
           taikoDataGas * this.config.l1DataGasScalar;
+
+    const baseline: UserOperationGasEstimate = {
+      callGasLimit: bigIntToHex(callGasLimit),
+      verificationGasLimit: bigIntToHex(verificationGasLimit),
+      preVerificationGas: bigIntToHex(preVerificationGas),
+      paymasterVerificationGasLimit: bigIntToHex(this.config.paymasterVerificationGasLimit),
+      paymasterPostOpGasLimit: bigIntToHex(this.config.paymasterPostOpGasLimit),
+    };
+
+    if (this.gasSimulator !== undefined) {
+      try {
+        const simulatedPreOpGas = await this.gasSimulator.estimatePreOpGas(
+          userOperation,
+          entryPoint,
+          baseline,
+        );
+        if (simulatedPreOpGas > preVerificationGas) {
+          const simulatedVerificationGas = simulatedPreOpGas - preVerificationGas;
+          if (simulatedVerificationGas > verificationGasLimit) {
+            verificationGasLimit = simulatedVerificationGas;
+          }
+        }
+      } catch (error) {
+        logEvent("warn", "bundler.gas_simulation_failed", {
+          entryPoint,
+          sender: userOperation.sender,
+          reason: error instanceof Error ? error.message : "simulation_failed",
+        });
+      }
+    }
 
     return {
       callGasLimit: bigIntToHex(callGasLimit),
@@ -653,16 +757,15 @@ export class BundlerService {
     }
 
     const receivedAt = Date.now();
-    this.userOperations.set(
-      userOpHash,
-      this.createStoredOperation({
+    const stored = this.createStoredOperation({
         hash: userOpHash,
         userOperation: parsed.userOperation,
         entryPoint: parsed.entryPoint,
         receivedAt,
         state: "pending",
-      }),
-    );
+      });
+    stored.estimatedGasLimit = this.getDeclaredGasLimit(parsed.userOperation);
+    this.userOperations.set(userOpHash, stored);
 
     this.persistence?.savePendingOperation(
       userOpHash,
@@ -851,6 +954,21 @@ export class BundlerService {
     operation.effectiveGasPrice = gasPrice;
     operation.finalizedAt = Date.now();
 
+    if (operation.estimatedGasLimit !== null && operation.estimatedGasLimit > 0n) {
+      const deltaGas = gasUsed - operation.estimatedGasLimit;
+      // Negative drift means we over-estimated gas; positive means we under-estimated.
+      const driftBps = Number((deltaGas * 10_000n) / operation.estimatedGasLimit);
+      logEvent("info", "bundler.gas_estimate_drift", {
+        userOpHash: operation.hash,
+        sender: operation.userOperation.sender,
+        entryPoint: operation.entryPoint,
+        estimatedGasLimit: operation.estimatedGasLimit.toString(),
+        actualGasUsed: gasUsed.toString(),
+        driftGas: deltaGas.toString(),
+        driftBps,
+      });
+    }
+
     this.persistFinalizedOperation(operation);
     this.persistence?.removePendingOperation(userOpHash);
     this.enforceFinalizedRetention();
@@ -964,6 +1082,7 @@ export class BundlerService {
       userOperation,
       entryPoint,
       receivedAt,
+      estimatedGasLimit: null,
       state,
       bundleHash: null,
       submissionTxHash,
@@ -1066,7 +1185,7 @@ export class BundlerService {
     }
   }
 
-  handleJsonRpc(payload: unknown): JsonRpcResponse {
+  async handleJsonRpc(payload: unknown): Promise<JsonRpcResponse> {
     const parsed = this.parseJsonRpcRequest(payload);
 
     if (!parsed.ok) {
@@ -1086,7 +1205,7 @@ export class BundlerService {
             request.params,
             2,
           );
-          const result = this.estimateUserOperationGas(userOperation, entryPoint);
+          const result = await this.estimateUserOperationGas(userOperation, entryPoint);
           return makeJsonRpcResult(request.id, result);
         }
         case "eth_sendUserOperation": {
@@ -1468,6 +1587,33 @@ export class BundlerService {
 
     return null;
   }
+
+  private getDeclaredGasLimit(userOperation: UserOperation): bigint | null {
+    if (
+      userOperation.callGasLimit === undefined ||
+      userOperation.verificationGasLimit === undefined ||
+      userOperation.preVerificationGas === undefined
+    ) {
+      return null;
+    }
+
+    const paymasterVerificationGasLimit =
+      userOperation.paymasterVerificationGasLimit === undefined
+        ? this.config.paymasterVerificationGasLimit
+        : hexToBigInt(userOperation.paymasterVerificationGasLimit);
+    const paymasterPostOpGasLimit =
+      userOperation.paymasterPostOpGasLimit === undefined
+        ? this.config.paymasterPostOpGasLimit
+        : hexToBigInt(userOperation.paymasterPostOpGasLimit);
+
+    return (
+      hexToBigInt(userOperation.callGasLimit) +
+      hexToBigInt(userOperation.verificationGasLimit) +
+      hexToBigInt(userOperation.preVerificationGas) +
+      paymasterVerificationGasLimit +
+      paymasterPostOpGasLimit
+    );
+  }
 }
 
 export interface BundlerHealthMonitor {
@@ -1506,7 +1652,7 @@ export const createBundlerApp = (
       return c.json(makeJsonRpcError(null, RPC_PARSE_ERROR, "Parse error"), 400);
     }
 
-    const response = service.handleJsonRpc(payload);
+    const response = await service.handleJsonRpc(payload);
     return c.json(response, 200);
   });
 
@@ -1525,13 +1671,22 @@ if (process.env.NODE_ENV !== "test") {
   }
 
   const submissionEnabled = submitterPrivateKey !== undefined;
+  const chainId = parsePositiveIntegerWithFallback(process.env.BUNDLER_CHAIN_ID, 167000);
+  const chain = resolveChainById(chainId);
+  const chainRpcUrl =
+    process.env.BUNDLER_CHAIN_RPC_URL?.trim() ||
+    process.env.TAIKO_RPC_URL?.trim() ||
+    process.env.TAIKO_MAINNET_RPC_URL?.trim() ||
+    "https://rpc.mainnet.taiko.xyz";
   const service = new BundlerService(
     {
+      chainId,
       acceptUserOperations: submissionEnabled,
       maxFinalizedOperations: parsePositiveIntegerWithFallback(
         process.env.BUNDLER_MAX_FINALIZED_OPERATIONS,
         10_000,
       ),
+      gasSimulator: new ViemGasSimulator(chainRpcUrl, chain),
     },
     persistence,
   );
@@ -1539,12 +1694,8 @@ if (process.env.NODE_ENV !== "test") {
   const submitterMonitor: BundlerHealthMonitor = submissionEnabled
     ? new BundlerSubmitter(service, {
         privateKey: submitterPrivateKey as HexString,
-        chain: taiko,
-        chainRpcUrl:
-          process.env.BUNDLER_CHAIN_RPC_URL?.trim() ||
-          process.env.TAIKO_RPC_URL?.trim() ||
-          process.env.TAIKO_MAINNET_RPC_URL?.trim() ||
-          "https://rpc.mainnet.taiko.xyz",
+        chain,
+        chainRpcUrl,
         pollIntervalMs: parsePositiveIntegerWithFallback(
           process.env.BUNDLER_BUNDLE_POLL_INTERVAL_MS,
           5_000,
@@ -1587,5 +1738,5 @@ if (process.env.NODE_ENV !== "test") {
     port,
   });
 
-  console.log(`Bundler RPC listening on :${port}`);
+  logEvent("info", "bundler.rpc_listening", { port });
 }
