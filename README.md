@@ -41,13 +41,14 @@ The agent holds USDC but no ETH. The entire gas payment happens in USDC through 
 
 ## Packages
 
-| Package                                | Description                                                      |
-| -------------------------------------- | ---------------------------------------------------------------- |
-| `@agent-paymaster/api`                 | Hono API — quotes, RPC gateway, rate limiting                    |
-| `@agent-paymaster/bundler`             | ERC-4337 bundler — gas estimation, mempool, automatic submission |
-| `@agent-paymaster/shared`              | Shared types and EIP-712 helpers                                 |
-| `@agent-paymaster/paymaster-contracts` | TaikoUsdcPaymaster (Solidity / Foundry)                          |
-| `@agent-paymaster/web`                 | Next.js landing page                                             |
+| Package                                | Description                                                                  |
+| -------------------------------------- | ---------------------------------------------------------------------------- |
+| `@agent-paymaster/api`                 | Hono API — quotes, RPC gateway, rate limiting                                |
+| `@agent-paymaster/bundler`             | ERC-4337 bundler — gas estimation, mempool, automatic submission             |
+| `@agent-paymaster/shared`              | Shared types and EIP-712 helpers                                             |
+| `@agent-paymaster/sdk`                 | TypeScript SDK for counterfactual account + permit + UserOp flow             |
+| `@agent-paymaster/paymaster-contracts` | TaikoUsdcPaymaster + ServoAccount + ServoAccountFactory (Solidity / Foundry) |
+| `@agent-paymaster/web`                 | Next.js landing page                                                         |
 
 ## Quick start
 
@@ -96,9 +97,26 @@ Static OpenAPI spec: [`docs/api-openapi.yaml`](docs/api-openapi.yaml).
 ## Contracts
 
 ```bash
-pnpm --filter @agent-paymaster/paymaster-contracts test        # run tests
+pnpm --filter @agent-paymaster/paymaster-contracts test                     # run tests
+pnpm --filter @agent-paymaster/paymaster-contracts test:gas                 # gas report
 pnpm --filter @agent-paymaster/paymaster-contracts deploy:taiko-mainnet
+pnpm --filter @agent-paymaster/paymaster-contracts deploy:taiko-hoodi
+pnpm --filter @agent-paymaster/paymaster-contracts deploy:taiko-hekla
+pnpm --filter @agent-paymaster/paymaster-contracts deploy:factory:taiko-mainnet
+pnpm --filter @agent-paymaster/paymaster-contracts deploy:factory:taiko-hoodi
+pnpm --filter @agent-paymaster/paymaster-contracts deploy:factory:taiko-hekla
 ```
+
+Key contracts in `packages/paymaster-contracts/src`:
+
+- `TaikoUsdcPaymaster.sol` — paymaster quote verification and USDC settlement.
+- `Permit4337Account.sol` — minimal ERC-4337 account with ERC-1271 permit support (smoke-test helper).
+- `ServoAccount.sol` — canonical Servo single-owner ERC-4337 account with `execute` and `executeBatch`.
+- `ServoAccountFactory.sol` — deterministic CREATE2 factory for ServoAccount deployment and address derivation.
+
+SDK package:
+
+- `@agent-paymaster/sdk` exports `getCounterfactualAddress`, `buildInitCode`, `buildUserOp`, `buildDummySignature`, `signPermit`, `signUserOp`, and `createAndExecute`.
 
 ## Docker
 
@@ -113,6 +131,7 @@ Two Dockerfiles: `Dockerfile` (API, port 3000) and `Dockerfile.bundler` (bundler
 | Network                 | Chain ID | Status     |
 | ----------------------- | -------- | ---------- |
 | Taiko Alethia (mainnet) | 167000   | Production |
+| Taiko Hekla (testnet)   | 167009   | Testnet    |
 | Taiko Hoodi (testnet)   | 167013   | Testnet    |
 
 ## Development

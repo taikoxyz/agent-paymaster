@@ -7,6 +7,10 @@
     "test": "forge test -vvv",
     "test:gas": "forge test -vvv --gas-report",
     "deploy:taiko-mainnet": "forge script script/Deploy.s.sol --rpc-url $TAIKO_MAINNET_RPC_URL --broadcast --verify",
-    "deploy:taiko-hoodi": "forge script script/Deploy.s.sol --rpc-url $TAIKO_HOODI_RPC_URL --broadcast --verify"
+    "deploy:taiko-hoodi": "forge script script/Deploy.s.sol --rpc-url $TAIKO_HOODI_RPC_URL --broadcast --verify",
+    "deploy:taiko-hekla": "forge script script/Deploy.s.sol --rpc-url $TAIKO_HEKLA_RPC_URL --broadcast --verify",
+    "deploy:factory:taiko-mainnet": "forge script script/DeployServoAccountFactory.s.sol --rpc-url $TAIKO_MAINNET_RPC_URL --broadcast --verify",
+    "deploy:factory:taiko-hoodi": "forge script script/DeployServoAccountFactory.s.sol --rpc-url $TAIKO_HOODI_RPC_URL --broadcast --verify",
+    "deploy:factory:taiko-hekla": "forge script script/DeployServoAccountFactory.s.sol --rpc-url $TAIKO_HEKLA_RPC_URL --broadcast --verify"
   }
 }
