@@ -67,6 +67,7 @@ For write-capable bundler behavior, set `BUNDLER_SUBMITTER_PRIVATE_KEY`. If it i
 
 Optional submission tuning:
 
+- `BUNDLER_CHAIN_ID` selects the target Taiko chain for bundler hashing + viem chain context (default `167000`).
 - `BUNDLER_CHAIN_RPC_URL` overrides the Taiko RPC used for both `simulateValidation` gas estimation and `handleOps` submission.
 - `BUNDLER_MAX_OPERATIONS_PER_BUNDLE` defaults to `1` for conservative single-op bundles.
 - `BUNDLER_MAX_INFLIGHT_TRANSACTIONS` defaults to `1` to keep nonce management simple and predictable.

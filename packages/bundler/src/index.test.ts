@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 
-import { packPaymasterAndData } from "@agent-paymaster/shared";
+import { packPaymasterAndData, SERVO_SUPPORTED_ENTRY_POINTS } from "@agent-paymaster/shared";
 import {
   BundlerService,
   createBundlerApp,
@@ -50,6 +50,13 @@ class FakeGasSimulator implements GasSimulator {
     void _entryPoint;
     void _baseline;
     return Promise.resolve(this.simulatedPreOpGas);
+  }
+}
+
+class ThrowingGasSimulator implements GasSimulator {
+  estimatePreOpGas(..._args: Parameters<GasSimulator["estimatePreOpGas"]>): Promise<bigint> {
+    void _args;
+    throw new Error("simulateValidation unavailable");
   }
 }
 
@@ -187,6 +194,11 @@ describe("BundlerService", () => {
     expect(health.entryPoints).toEqual([ENTRY_POINT_V08, ENTRY_POINT_V07]);
   });
 
+  it("defaults to shared supported entry points when none are configured", () => {
+    const defaultService = new BundlerService();
+    expect(defaultService.getSupportedEntryPoints()).toEqual([...SERVO_SUPPORTED_ENTRY_POINTS]);
+  });
+
   it("estimates gas including taiko l1 data gas contribution", async () => {
     const estimate = await service.estimateUserOperationGas(
       buildUserOperation({ l1DataGas: "0x64" }),
@@ -238,6 +250,23 @@ describe("BundlerService", () => {
     );
 
     expect(estimate.verificationGasLimit).toBe("0x68bc0");
+  });
+
+  it("falls back to heuristic estimates when simulation fails", async () => {
+    const serviceWithFailingSimulation = new BundlerService({
+      chainId: 167000,
+      entryPoints: [ENTRY_POINT_V08],
+      gasSimulator: new ThrowingGasSimulator(),
+    });
+
+    const estimate = await serviceWithFailingSimulation.estimateUserOperationGas(
+      buildUserOperation({ initCode: "0x1234" }),
+      ENTRY_POINT_V08,
+    );
+
+    expect(estimate.callGasLimit).toBe("0xd6f8");
+    expect(estimate.verificationGasLimit).toBe("0x1d4d8");
+    expect(estimate.preVerificationGas).toBe("0x5210");
   });
 
   it("stores pending user operations and resolves lookups", () => {

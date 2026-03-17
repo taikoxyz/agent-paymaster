@@ -19,6 +19,9 @@ export const buildHealth = (service: string): ServiceHealth => ({
   timestamp: new Date().toISOString(),
 });
 
+/** Servo's canonical supported EntryPoint set (ERC-4337 v0.8 packed format). */
+export const SERVO_SUPPORTED_ENTRY_POINTS = ["0x0000000071727de22e5e9d8baf0edac6f37da032"] as const;
+
 /** ABI parameter layout for TaikoUsdcPaymaster paymasterData (quote + signature + permit). */
 export const PAYMASTER_DATA_PARAMETERS = [
   {

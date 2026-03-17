@@ -1,9 +1,13 @@
-import { buildHealth, normalizePaymasterAndData } from "@agent-paymaster/shared";
+import {
+  buildHealth,
+  normalizePaymasterAndData,
+  SERVO_SUPPORTED_ENTRY_POINTS,
+} from "@agent-paymaster/shared";
 import { serve } from "@hono/node-server";
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
-import { createPublicClient, http } from "viem";
-import { taiko } from "viem/chains";
+import { createPublicClient, http, type Chain } from "viem";
+import { taiko, taikoHekla, taikoHoodi } from "viem/chains";
 
 import {
   buildCanonicalUserOpHash,
@@ -371,12 +375,25 @@ const parsePositiveIntegerWithFallback = (value: string | undefined, fallback: n
   return parsed;
 };
 
+const resolveChainById = (chainId: number): Chain | undefined => {
+  switch (chainId) {
+    case 167000:
+      return taiko;
+    case 167009:
+      return taikoHekla;
+    case 167013:
+      return taikoHoodi;
+    default:
+      return undefined;
+  }
+};
+
 export class ViemGasSimulator implements GasSimulator {
   private readonly publicClient;
 
-  constructor(rpcUrl: string) {
+  constructor(rpcUrl: string, chain?: Chain) {
     this.publicClient = createPublicClient({
-      chain: taiko,
+      chain,
       transport: http(rpcUrl),
     });
   }
@@ -429,10 +446,9 @@ export class BundlerService {
   constructor(config: BundlerConfigInput = {}, persistence?: BundlerPersistence) {
     this.config = {
       chainId: config.chainId ?? 167000,
-      entryPoints: config.entryPoints?.map((entryPoint) => normalizeAddress(entryPoint)) ?? [
-        "0x0000000071727de22e5e9d8baf0edac6f37da032",
-        "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789",
-      ],
+      entryPoints:
+        config.entryPoints?.map((entryPoint) => normalizeAddress(entryPoint)) ??
+        SERVO_SUPPORTED_ENTRY_POINTS.map((entryPoint) => normalizeAddress(entryPoint)),
       acceptUserOperations: config.acceptUserOperations ?? true,
       reputationMaxFailures: config.reputationMaxFailures ?? 3,
       banWindowMs: config.banWindowMs ?? 5 * 60 * 1000,
@@ -888,6 +904,7 @@ export class BundlerService {
 
     if (operation.estimatedGasLimit !== null && operation.estimatedGasLimit > 0n) {
       const deltaGas = gasUsed - operation.estimatedGasLimit;
+      // Negative drift means we over-estimated gas; positive means we under-estimated.
       const driftBps = Number((deltaGas * 10_000n) / operation.estimatedGasLimit);
       logEvent("info", "bundler.gas_estimate_drift", {
         userOpHash: operation.hash,
@@ -1449,6 +1466,8 @@ if (process.env.NODE_ENV !== "test") {
   }
 
   const submissionEnabled = submitterPrivateKey !== undefined;
+  const chainId = parsePositiveIntegerWithFallback(process.env.BUNDLER_CHAIN_ID, 167000);
+  const chain = resolveChainById(chainId);
   const chainRpcUrl =
     process.env.BUNDLER_CHAIN_RPC_URL?.trim() ||
     process.env.TAIKO_RPC_URL?.trim() ||
@@ -1456,8 +1475,9 @@ if (process.env.NODE_ENV !== "test") {
     "https://rpc.mainnet.taiko.xyz";
   const service = new BundlerService(
     {
+      chainId,
       acceptUserOperations: submissionEnabled,
-      gasSimulator: new ViemGasSimulator(chainRpcUrl),
+      gasSimulator: new ViemGasSimulator(chainRpcUrl, chain),
     },
     persistence,
   );
@@ -1465,7 +1485,7 @@ if (process.env.NODE_ENV !== "test") {
   const submitterMonitor: BundlerHealthMonitor = submissionEnabled
     ? new BundlerSubmitter(service, {
         privateKey: submitterPrivateKey as HexString,
-        chain: taiko,
+        chain,
         chainRpcUrl,
         pollIntervalMs: parsePositiveIntegerWithFallback(
           process.env.BUNDLER_BUNDLE_POLL_INTERVAL_MS,
@@ -1509,5 +1529,5 @@ if (process.env.NODE_ENV !== "test") {
     port,
   });
 
-  console.log(`Bundler RPC listening on :${port}`);
+  logEvent("info", "bundler.rpc_listening", { port });
 }

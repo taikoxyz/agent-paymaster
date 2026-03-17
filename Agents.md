@@ -84,6 +84,7 @@ For live `eth_sendUserOperation` support, the bundler also needs:
 
 Optional bundler submission tuning:
 
+- `BUNDLER_CHAIN_ID` — target chain id for bundler hashing + viem chain context (default `167000`)
 - `BUNDLER_CHAIN_RPC_URL` — Taiko RPC used for EntryPoint `simulateValidation` gas estimation and `handleOps` submission (defaults to `TAIKO_RPC_URL`, then `TAIKO_MAINNET_RPC_URL`, then public Taiko RPC)
 - `BUNDLER_BENEFICIARY_ADDRESS` — alternate fee recipient; defaults to the submitter address
 - `BUNDLER_BUNDLE_POLL_INTERVAL_MS` — submission loop interval
@@ -176,6 +177,7 @@ Vercel should use standard deployment protection (`prod_deployment_urls_and_all_
 | `RATE_LIMIT_MAX_REQUESTS`           | 60      | Requests per window per sender            |
 | `RATE_LIMIT_WINDOW_MS`              | 60000   | Rate limit window (1 min)                 |
 | `REQUEST_TIMEOUT_MS`                | 2500    | Upstream request timeout                  |
+| `BUNDLER_CHAIN_ID`                  | 167000  | Bundler chain id + viem chain context     |
 | `BUNDLER_MAX_OPERATIONS_PER_BUNDLE` | 1       | Safe default bundle size                  |
 | `BUNDLER_MAX_INFLIGHT_TRANSACTIONS` | 1       | Max submitter txs awaiting confirmation   |
 | `BUNDLER_BUNDLE_POLL_INTERVAL_MS`   | 5000    | Submission loop cadence                   |
