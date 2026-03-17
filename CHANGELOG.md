@@ -10,9 +10,20 @@ Format:
 
 ## [Unreleased]
 
-### Added
+## [v0.2.4] - 2026-03-17
 
-- Reintroduced `@agent-paymaster/sdk` with helper APIs for Servo cold-start flows (`getCounterfactualAddress`, `buildInitCode`, `buildUserOp`, `signPermit`, `signUserOp`, `createAndExecute`) plus unit tests and a gated Hekla integration test scaffold.
+### Changed
+
+- SDK rewritten to use `viem/account-abstraction` primitives. `getUserOperationHash` is now a pure local computation (no RPC call). Custom UserOp building, packing, and signing modules removed. SDK source reduced by 50%.
+- Initial quote step in SDK `createAndExecute` now uses `pm_getPaymasterStubData` instead of full `pm_getPaymasterData`, eliminating a redundant server-side simulation round-trip.
+- EntryPoint version references corrected from v0.8 to v0.7 across shared, API, bundler, and SDK (matching the actual eth-infinitism/account-abstraction v0.7.0 submodule).
+- Test-only contracts (`PaymasterStub.sol`, `Permit4337Account.sol`) moved from `src/` to `test/`.
+- SDK address validation now uses `viem.isAddress` with consistent lowercase normalization.
+
+### Fixed
+
+- Duplicate `CANONICAL_TAIKO_ENTRY_POINT` constant in bundler replaced with imported `SERVO_TAIKO_ENTRY_POINT_V07` from shared.
+- Redundant `encodeFunctionData` call for `createAccount` in SDK flow replaced with `initCode` slice derivation.
 
 ## [v0.2.3] - 2026-03-16
 
@@ -137,7 +148,9 @@ Format:
 
 - Documented the release contract, required GitHub Actions variables and secrets, and the Railway plus Vercel deployment flow in `README.md` and `Agents.md`.
 
-[Unreleased]: https://github.com/ggonzalez94/agent-paymaster/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/ggonzalez94/agent-paymaster/compare/v0.2.4...HEAD
+[v0.2.4]: https://github.com/ggonzalez94/agent-paymaster/releases/tag/v0.2.4
+[v0.2.3]: https://github.com/ggonzalez94/agent-paymaster/releases/tag/v0.2.3
 [v0.2.0]: https://github.com/ggonzalez94/agent-paymaster/releases/tag/v0.2.0
 [v0.1.6]: https://github.com/ggonzalez94/agent-paymaster/releases/tag/v0.1.6
 [v0.1.5]: https://github.com/ggonzalez94/agent-paymaster/releases/tag/v0.1.5
