@@ -249,6 +249,7 @@ describe("integration: full UserOp lifecycle", () => {
     stack.bundlerService.markBundleSubmitted(bundle!.bundleHash, {
       transactionHash: `0x${"aa".repeat(32)}`,
       blockNumber: 100,
+      blockHash: `0x${"11".repeat(32)}`,
       gasUsed: "0x5208",
       gasCost: "0x1234567890",
       effectiveGasPrice: "0x2540be400",
@@ -516,6 +517,7 @@ describe("scenario: multiple UserOps in one bundle", () => {
     stack.bundlerService.markBundleSubmitted(bundle!.bundleHash, {
       transactionHash: `0x${"bb".repeat(32)}`,
       blockNumber: 200,
+      blockHash: `0x${"22".repeat(32)}`,
       gasUsed: "0x5208",
       gasCost: "0x1234567890",
       success: true,
@@ -569,6 +571,7 @@ describe("scenario: failed bundle submission", () => {
     stack.bundlerService.markBundleSubmitted(bundle!.bundleHash, {
       transactionHash: `0x${"cc".repeat(32)}`,
       blockNumber: 300,
+      blockHash: `0x${"33".repeat(32)}`,
       gasUsed: "0x5208",
       gasCost: "0x1234567890",
       success: false,
@@ -713,6 +716,7 @@ describe("load: bundler throughput", () => {
       stack.bundlerService.markBundleSubmitted(bundle.bundleHash, {
         transactionHash: `0x${bundleCount.toString(16).padStart(64, "0")}`,
         blockNumber: 1000 + bundleCount,
+        blockHash: `0x${bundleCount.toString(16).padStart(64, "f")}`,
         gasUsed: "0x5208",
         gasCost: "0x1234567890",
         success: true,
