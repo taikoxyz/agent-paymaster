@@ -15,6 +15,8 @@ remappings = [
     "forge-std/=lib/forge-std/src/",
 ]
 
+fs_permissions = [{ access = "read-write", path = "/" }]
+
 [rpc_endpoints]
 taiko_mainnet = "${TAIKO_MAINNET_RPC_URL}"
 taiko_hoodi = "${TAIKO_HOODI_RPC_URL}"

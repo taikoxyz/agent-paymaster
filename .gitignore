@@ -22,3 +22,4 @@ package-lock.json
 
 # Local notes
 .notes/
+packages/paymaster-contracts/broadcast/
