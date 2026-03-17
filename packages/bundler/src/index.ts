@@ -12,6 +12,7 @@ import { taiko, taikoHekla, taikoHoodi } from "viem/chains";
 import {
   buildCanonicalUserOpHash,
   ENTRY_POINT_SIMULATION_ABI,
+  classifySimulationValidation,
   extractSimulationPreOpGas,
   packUserOperation,
 } from "./entrypoint.js";
@@ -32,6 +33,16 @@ const RPC_METHOD_NOT_FOUND = -32601;
 const RPC_INVALID_PARAMS = -32602;
 const RPC_INTERNAL_ERROR = -32603;
 const RPC_RESOURCE_UNAVAILABLE = -32001;
+
+const REPUTATION_THROTTLE_FAILURES = 3;
+const REPUTATION_BAN_FAILURES = 5;
+const DEFAULT_REPUTATION_WINDOW_MS = 5 * 60 * 1000;
+const DEFAULT_THROTTLE_WINDOW_MS = 10 * 1000;
+const CANONICAL_TAIKO_ENTRY_POINT_V08 =
+  "0x0000000071727de22e5e9d8baf0edac6f37da032" as HexString;
+const DEFAULT_SUPPORTED_ENTRY_POINTS: HexString[] = Array.isArray(SERVO_SUPPORTED_ENTRY_POINTS)
+  ? [...SERVO_SUPPORTED_ENTRY_POINTS]
+  : [CANONICAL_TAIKO_ENTRY_POINT_V08];
 
 export interface UserOperation {
   sender: HexString;
@@ -134,6 +145,8 @@ export type JsonRpcResponse = JsonRpcSuccess | JsonRpcFailure;
 
 interface SenderReputation {
   failures: number;
+  windowStartedAt: number | null;
+  throttledUntil: number | null;
   bannedUntil: number | null;
 }
 
@@ -241,11 +254,19 @@ export interface BundlerPersistence {
     effectiveGasPrice: bigint | null;
   }>;
   pruneFinalizedOperations(maxEntries: number): string[];
-  saveSenderReputation(sender: string, failures: number, bannedUntil: number | null): void;
+  saveSenderReputation(
+    sender: string,
+    failures: number,
+    windowStartedAt: number | null,
+    throttledUntil: number | null,
+    bannedUntil: number | null,
+  ): void;
   deleteSenderReputation(sender: string): void;
   loadSenderReputations(): Array<{
     sender: string;
     failures: number;
+    windowStartedAt: number | null;
+    throttledUntil: number | null;
     bannedUntil: number | null;
   }>;
   deleteExpiredSenderReputations(nowMs?: number): void;
@@ -255,7 +276,10 @@ interface BundlerConfigInput {
   chainId?: number;
   entryPoints?: string[];
   acceptUserOperations?: boolean;
-  reputationMaxFailures?: number;
+  reputationBanFailures?: number;
+  reputationThrottleFailures?: number;
+  reputationWindowMs?: number;
+  throttleWindowMs?: number;
   banWindowMs?: number;
   baseCallGas?: bigint;
   baseVerificationGas?: bigint;
@@ -268,13 +292,17 @@ interface BundlerConfigInput {
   paymasterPostOpGasLimit?: bigint;
   maxFinalizedOperations?: number;
   gasSimulator?: GasSimulator;
+  admissionSimulator?: AdmissionSimulator;
 }
 
 interface BundlerConfig {
   chainId: number;
   entryPoints: string[];
   acceptUserOperations: boolean;
-  reputationMaxFailures: number;
+  reputationBanFailures: number;
+  reputationThrottleFailures: number;
+  reputationWindowMs: number;
+  throttleWindowMs: number;
   banWindowMs: number;
   baseCallGas: bigint;
   baseVerificationGas: bigint;
@@ -294,6 +322,10 @@ export interface GasSimulator {
     entryPoint: HexString,
     baseline: UserOperationGasEstimate,
   ): Promise<bigint>;
+}
+
+export interface AdmissionSimulator {
+  simulateValidation(userOperation: UserOperation, entryPoint: HexString): Promise<void>;
 }
 
 interface SendUserOperationParamsInput {
@@ -525,6 +557,41 @@ export class ViemGasSimulator implements GasSimulator {
   }
 }
 
+export class ViemAdmissionSimulator implements AdmissionSimulator {
+  private readonly publicClient;
+
+  constructor(rpcUrl: string, chain?: Chain) {
+    this.publicClient = createPublicClient({
+      chain,
+      transport: http(rpcUrl),
+    });
+  }
+
+  async simulateValidation(userOperation: UserOperation, entryPoint: HexString): Promise<void> {
+    try {
+      await this.publicClient.simulateContract({
+        address: entryPoint,
+        abi: ENTRY_POINT_SIMULATION_ABI,
+        functionName: "simulateValidation",
+        args: [packUserOperation(userOperation)],
+      });
+    } catch (error) {
+      const classified = classifySimulationValidation(error);
+      if (classified?.success) {
+        return;
+      }
+
+      if (classified && !classified.success) {
+        throw new Error(classified.reason);
+      }
+
+      throw error;
+    }
+
+    throw new Error("simulateValidation unexpectedly succeeded without revert");
+  }
+}
+
 export class BundlerService {
   readonly config: BundlerConfig;
 
@@ -533,6 +600,7 @@ export class BundlerService {
   private readonly senderReputation = new Map<string, SenderReputation>();
   private readonly persistence?: BundlerPersistence;
   private readonly gasSimulator?: GasSimulator;
+  private readonly admissionSimulator?: AdmissionSimulator;
   private readonly simulationFailureReasons = new Map<string, number>();
   private readonly revertReasons = new Map<string, number>();
   private bundleSequence = 0;
@@ -546,12 +614,15 @@ export class BundlerService {
     this.config = {
       chainId: config.chainId ?? 167000,
       entryPoints:
-        config.entryPoints?.map((entryPoint) => normalizeAddress(entryPoint)) ?? [
-          ...SERVO_SUPPORTED_ENTRY_POINTS,
-        ],
+        config.entryPoints?.map((entryPoint) => normalizeAddress(entryPoint)) ??
+        DEFAULT_SUPPORTED_ENTRY_POINTS,
       acceptUserOperations: config.acceptUserOperations ?? true,
-      reputationMaxFailures: config.reputationMaxFailures ?? 3,
-      banWindowMs: config.banWindowMs ?? 5 * 60 * 1000,
+      reputationBanFailures: config.reputationBanFailures ?? REPUTATION_BAN_FAILURES,
+      reputationThrottleFailures:
+        config.reputationThrottleFailures ?? REPUTATION_THROTTLE_FAILURES,
+      reputationWindowMs: config.reputationWindowMs ?? DEFAULT_REPUTATION_WINDOW_MS,
+      throttleWindowMs: config.throttleWindowMs ?? DEFAULT_THROTTLE_WINDOW_MS,
+      banWindowMs: config.banWindowMs ?? 2 * 60 * 1000,
       baseCallGas: config.baseCallGas ?? 55_000n,
       baseVerificationGas: config.baseVerificationGas ?? 120_000n,
       basePreVerificationGas: config.basePreVerificationGas ?? 21_000n,
@@ -564,6 +635,7 @@ export class BundlerService {
       maxFinalizedOperations: config.maxFinalizedOperations ?? 10_000,
     };
     this.gasSimulator = config.gasSimulator;
+    this.admissionSimulator = config.admissionSimulator;
 
     this.persistence = persistence;
 
@@ -612,6 +684,8 @@ export class BundlerService {
     for (const reputation of persistence.loadSenderReputations()) {
       this.senderReputation.set(reputation.sender, {
         failures: reputation.failures,
+        windowStartedAt: reputation.windowStartedAt ?? Date.now(),
+        throttledUntil: reputation.throttledUntil,
         bannedUntil: reputation.bannedUntil,
       });
     }
@@ -812,7 +886,25 @@ export class BundlerService {
     };
   }
 
-  sendUserOperation(userOperationInput: unknown, entryPointInput: unknown): string {
+  private async prepareUserOperationForAdmission(
+    userOperation: UserOperation,
+    entryPoint: HexString,
+  ): Promise<UserOperation> {
+    const estimate = await this.estimateUserOperationGas(userOperation, entryPoint);
+    return {
+      ...userOperation,
+      callGasLimit: userOperation.callGasLimit ?? estimate.callGasLimit,
+      verificationGasLimit: userOperation.verificationGasLimit ?? estimate.verificationGasLimit,
+      preVerificationGas: userOperation.preVerificationGas ?? estimate.preVerificationGas,
+      paymasterVerificationGasLimit:
+        userOperation.paymasterVerificationGasLimit ?? estimate.paymasterVerificationGasLimit,
+      paymasterPostOpGasLimit:
+        userOperation.paymasterPostOpGasLimit ?? estimate.paymasterPostOpGasLimit,
+      paymasterAndData: userOperation.paymasterAndData ?? "0x",
+    };
+  }
+
+  async sendUserOperation(userOperationInput: unknown, entryPointInput: unknown): Promise<string> {
     if (!this.config.acceptUserOperations) {
       throw new BundlerRpcError(
         RPC_RESOURCE_UNAVAILABLE,
@@ -828,13 +920,18 @@ export class BundlerService {
       entryPoint: entryPointInput,
     });
 
-    this.ensureSenderNotBanned(parsed.userOperation.sender);
+    const preparedUserOperation = await this.prepareUserOperationForAdmission(
+      parsed.userOperation,
+      parsed.entryPoint,
+    );
+
+    this.ensureSenderCanSubmit(preparedUserOperation.sender);
     this.assertEntryPointSupported(parsed.entryPoint);
 
-    const userOpHash = this.buildUserOpHash(parsed.userOperation, parsed.entryPoint);
+    const userOpHash = this.buildUserOpHash(preparedUserOperation, parsed.entryPoint);
     const matchingPendingOperation = this.findOpenOperationBySenderAndNonce(
-      parsed.userOperation.sender,
-      hexToBigInt(parsed.userOperation.nonce),
+      preparedUserOperation.sender,
+      hexToBigInt(preparedUserOperation.nonce),
     );
 
     if (matchingPendingOperation && matchingPendingOperation.hash !== userOpHash) {
@@ -843,8 +940,8 @@ export class BundlerService {
         "Conflicting pending operation for sender and nonce",
         {
           reason: "nonce_conflict",
-          sender: parsed.userOperation.sender,
-          nonce: parsed.userOperation.nonce,
+          sender: preparedUserOperation.sender,
+          nonce: preparedUserOperation.nonce,
           conflictingUserOpHash: matchingPendingOperation.hash,
         },
       );
@@ -858,21 +955,40 @@ export class BundlerService {
       return userOpHash;
     }
 
+    if (this.admissionSimulator) {
+      try {
+        await this.admissionSimulator.simulateValidation(preparedUserOperation, parsed.entryPoint);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : "validation_failed";
+        this.recordDeterministicValidationFailure(preparedUserOperation.sender);
+        throw new BundlerRpcError(
+          RPC_INVALID_PARAMS,
+          `UserOperation validation failed: ${reason}`,
+          {
+            reason: "validation_failed",
+            sender: preparedUserOperation.sender,
+            entryPoint: parsed.entryPoint,
+            details: reason,
+          },
+        );
+      }
+    }
+
     const receivedAt = Date.now();
     const stored = this.createStoredOperation({
         hash: userOpHash,
-        userOperation: parsed.userOperation,
+        userOperation: preparedUserOperation,
         entryPoint: parsed.entryPoint,
         receivedAt,
         state: "pending",
       });
-    stored.estimatedGasLimit = this.getDeclaredGasLimit(parsed.userOperation);
+    stored.estimatedGasLimit = this.getDeclaredGasLimit(preparedUserOperation);
     this.userOperations.set(userOpHash, stored);
 
     this.persistence?.savePendingOperation(
       userOpHash,
       parsed.entryPoint,
-      parsed.userOperation,
+      preparedUserOperation,
       receivedAt,
     );
     this.userOpsAcceptedTotal += 1;
@@ -1077,6 +1193,7 @@ export class BundlerService {
       this.userOpsIncludedTotal += 1;
       this.inclusionLatencySampleCount += 1;
       this.inclusionLatencyTotalMs += finalizationLatencyMs;
+      this.clearSenderReputation(operation.userOperation.sender);
     } else {
       this.userOpsFailedTotal += 1;
       incrementReasonCounter(
@@ -1156,7 +1273,7 @@ export class BundlerService {
     operation.finalizedAt = Date.now();
     this.userOpsFailedTotal += 1;
     incrementReasonCounter(this.simulationFailureReasons, reason);
-    this.recordValidationFailure(operation.userOperation.sender);
+    this.recordDeterministicValidationFailure(operation.userOperation.sender);
     this.persistFinalizedOperation(operation);
     this.persistence?.removePendingOperation(userOpHash);
     this.enforceFinalizedRetention();
@@ -1332,7 +1449,7 @@ export class BundlerService {
             request.params,
             2,
           );
-          const hash = this.sendUserOperation(userOperation, entryPoint);
+          const hash = await this.sendUserOperation(userOperation, entryPoint);
           return makeJsonRpcResult(request.id, hash);
         }
         case "eth_getUserOperationByHash": {
@@ -1419,21 +1536,10 @@ export class BundlerService {
   private parseSendUserOperationParams(
     input: SendUserOperationParamsInput,
   ): ParsedSendUserOperationParams {
-    try {
-      return {
-        userOperation: this.parseUserOperation(input.userOperation),
-        entryPoint: this.parseEntryPoint(input.entryPoint),
-      };
-    } catch (error) {
-      if (isObject(input.userOperation) && typeof input.userOperation.sender === "string") {
-        const sender = input.userOperation.sender;
-        if (ADDRESS_PATTERN.test(sender)) {
-          this.recordValidationFailure(sender.toLowerCase());
-        }
-      }
-
-      throw error;
-    }
+    return {
+      userOperation: this.parseUserOperation(input.userOperation),
+      entryPoint: this.parseEntryPoint(input.entryPoint),
+    };
   }
 
   private parseEntryPoint(entryPointInput: unknown): HexString {
@@ -1444,6 +1550,41 @@ export class BundlerService {
     }
 
     return normalizeAddress(entryPointInput);
+  }
+
+  private parseOptionalChainId(chainIdInput: unknown): number | null {
+    if (chainIdInput === undefined || chainIdInput === null) {
+      return null;
+    }
+
+    if (typeof chainIdInput === "number" && Number.isInteger(chainIdInput) && chainIdInput >= 0) {
+      return chainIdInput;
+    }
+
+    if (typeof chainIdInput === "bigint" && chainIdInput >= 0n) {
+      return Number(chainIdInput);
+    }
+
+    if (typeof chainIdInput === "string") {
+      const trimmed = chainIdInput.trim();
+      if (trimmed.length === 0) {
+        throw new BundlerRpcError(RPC_INVALID_PARAMS, "userOperation.chainId must not be empty", {
+          reason: "chain_id_invalid",
+        });
+      }
+
+      const parsed =
+        trimmed.startsWith("0x") || trimmed.startsWith("0X")
+          ? Number.parseInt(trimmed, 16)
+          : Number.parseInt(trimmed, 10);
+      if (Number.isInteger(parsed) && parsed >= 0) {
+        return parsed;
+      }
+    }
+
+    throw new BundlerRpcError(RPC_INVALID_PARAMS, "userOperation.chainId must be an integer", {
+      reason: "chain_id_invalid",
+    });
   }
 
   private parseUserOperation(userOperationInput: unknown): UserOperation {
@@ -1460,6 +1601,18 @@ export class BundlerService {
     }
 
     const sender = normalizeAddress(userOperationInput.sender);
+    const chainId = this.parseOptionalChainId(userOperationInput.chainId);
+    if (chainId !== null && chainId !== this.config.chainId) {
+      throw new BundlerRpcError(
+        RPC_INVALID_PARAMS,
+        `userOperation.chainId must match bundler chainId (${this.config.chainId})`,
+        {
+          reason: "chain_id_mismatch",
+          expectedChainId: this.config.chainId,
+          submittedChainId: chainId,
+        },
+      );
+    }
 
     const userOperation: UserOperation = {
       sender,
@@ -1639,42 +1792,126 @@ export class BundlerService {
     }
   }
 
-  private ensureSenderNotBanned(sender: string): void {
-    const reputation = this.senderReputation.get(sender);
-    if (!reputation || reputation.bannedUntil === null) {
+  private ensureSenderCanSubmit(sender: string): void {
+    const now = Date.now();
+    const reputation = this.getSenderReputation(sender, now);
+    if (!reputation) {
       return;
     }
 
-    if (reputation.bannedUntil <= Date.now()) {
-      this.senderReputation.delete(sender);
-      this.persistence?.deleteSenderReputation(sender);
-      return;
+    if (reputation.bannedUntil !== null && reputation.bannedUntil > now) {
+      throw new BundlerRpcError(RPC_RESOURCE_UNAVAILABLE, "Sender is temporarily banned", {
+        reason: "sender_banned",
+        sender,
+        bannedUntil: reputation.bannedUntil,
+      });
     }
 
-    throw new BundlerRpcError(RPC_RESOURCE_UNAVAILABLE, "Sender is temporarily banned", {
-      reason: "sender_banned",
-      sender,
-      bannedUntil: reputation.bannedUntil,
-    });
+    if (reputation.throttledUntil !== null && reputation.throttledUntil > now) {
+      throw new BundlerRpcError(RPC_RESOURCE_UNAVAILABLE, "Sender is temporarily throttled", {
+        reason: "sender_throttled",
+        sender,
+        throttledUntil: reputation.throttledUntil,
+        retryAfterMs: reputation.throttledUntil - now,
+      });
+    }
   }
 
-  private recordValidationFailure(sender: string): void {
-    const current = this.senderReputation.get(sender) ?? {
+  private getSenderReputation(sender: string, now: number = Date.now()): SenderReputation | null {
+    const reputation = this.senderReputation.get(sender);
+    if (!reputation) {
+      return null;
+    }
+
+    if (
+      reputation.windowStartedAt !== null &&
+      now - reputation.windowStartedAt >= this.config.reputationWindowMs
+    ) {
+      this.clearSenderReputation(sender);
+      return null;
+    }
+
+    let updated = false;
+    if (reputation.bannedUntil !== null && reputation.bannedUntil <= now) {
+      reputation.bannedUntil = null;
+      updated = true;
+    }
+    if (reputation.throttledUntil !== null && reputation.throttledUntil <= now) {
+      reputation.throttledUntil = null;
+      updated = true;
+    }
+
+    if (
+      reputation.failures <= 0 &&
+      reputation.bannedUntil === null &&
+      reputation.throttledUntil === null
+    ) {
+      this.clearSenderReputation(sender);
+      return null;
+    }
+
+    if (updated) {
+      this.saveSenderReputation(sender, reputation);
+    }
+
+    return reputation;
+  }
+
+  private clearSenderReputation(sender: string): void {
+    this.senderReputation.delete(sender);
+    this.persistence?.deleteSenderReputation(sender);
+  }
+
+  private saveSenderReputation(sender: string, reputation: SenderReputation): void {
+    this.persistence?.saveSenderReputation(
+      sender,
+      reputation.failures,
+      reputation.windowStartedAt,
+      reputation.throttledUntil,
+      reputation.bannedUntil,
+    );
+  }
+
+  private recordDeterministicValidationFailure(sender: string): void {
+    const now = Date.now();
+    const current = this.getSenderReputation(sender, now) ?? {
       failures: 0,
+      windowStartedAt: now,
+      throttledUntil: null,
       bannedUntil: null,
     };
 
     const nextFailures = current.failures + 1;
-    const bannedUntil =
-      nextFailures >= this.config.reputationMaxFailures
-        ? Date.now() + this.config.banWindowMs
-        : current.bannedUntil;
-
-    this.senderReputation.set(sender, {
+    const next: SenderReputation = {
       failures: nextFailures,
-      bannedUntil,
-    });
-    this.persistence?.saveSenderReputation(sender, nextFailures, bannedUntil);
+      windowStartedAt: current.windowStartedAt ?? now,
+      throttledUntil: null,
+      bannedUntil: null,
+    };
+
+    if (nextFailures >= this.config.reputationBanFailures) {
+      next.bannedUntil = now + this.config.banWindowMs;
+      logEvent("warn", "bundler.sender_banned", {
+        sender,
+        failures: nextFailures,
+        bannedUntil: next.bannedUntil,
+      });
+    } else if (nextFailures >= this.config.reputationThrottleFailures) {
+      next.throttledUntil = now + this.config.throttleWindowMs;
+      logEvent("warn", "bundler.sender_throttled", {
+        sender,
+        failures: nextFailures,
+        throttledUntil: next.throttledUntil,
+      });
+    } else {
+      logEvent("warn", "bundler.sender_validation_warning", {
+        sender,
+        failures: nextFailures,
+      });
+    }
+
+    this.senderReputation.set(sender, next);
+    this.saveSenderReputation(sender, next);
   }
 
   private buildUserOpHash(userOperation: UserOperation, entryPoint: HexString): string {
@@ -1805,6 +2042,9 @@ if (process.env.NODE_ENV !== "test") {
         10_000,
       ),
       gasSimulator: new ViemGasSimulator(chainRpcUrl, chain),
+      admissionSimulator: submissionEnabled
+        ? new ViemAdmissionSimulator(chainRpcUrl, chain)
+        : undefined,
     },
     persistence,
   );

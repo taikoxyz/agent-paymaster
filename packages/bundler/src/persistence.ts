@@ -49,11 +49,14 @@ export class BundlerPersistenceStore {
       CREATE TABLE IF NOT EXISTS sender_reputations (
         sender TEXT PRIMARY KEY,
         failures INTEGER NOT NULL,
+        window_started_at INTEGER,
+        throttled_until INTEGER,
         banned_until INTEGER
       );
     `);
 
     this.migratePendingUserOperationsTable();
+    this.migrateSenderReputationsTable();
     this.deleteExpiredSenderReputations();
   }
 
@@ -75,6 +78,21 @@ export class BundlerPersistenceStore {
 
     if (!columnNames.has("submission_started_at")) {
       this.db.exec("ALTER TABLE pending_user_operations ADD COLUMN submission_started_at INTEGER");
+    }
+  }
+
+  private migrateSenderReputationsTable(): void {
+    const columns = this.db.prepare("PRAGMA table_info(sender_reputations)").all() as Array<{
+      name: string;
+    }>;
+    const columnNames = new Set(columns.map((column) => column.name));
+
+    if (!columnNames.has("window_started_at")) {
+      this.db.exec("ALTER TABLE sender_reputations ADD COLUMN window_started_at INTEGER");
+    }
+
+    if (!columnNames.has("throttled_until")) {
+      this.db.exec("ALTER TABLE sender_reputations ADD COLUMN throttled_until INTEGER");
     }
   }
 
@@ -322,26 +340,48 @@ export class BundlerPersistenceStore {
     return deletedHashes;
   }
 
-  saveSenderReputation(sender: string, failures: number, bannedUntil: number | null): void {
+  saveSenderReputation(
+    sender: string,
+    failures: number,
+    windowStartedAt: number | null,
+    throttledUntil: number | null,
+    bannedUntil: number | null,
+  ): void {
     this.db
       .prepare(
-        "INSERT OR REPLACE INTO sender_reputations (sender, failures, banned_until) VALUES (?, ?, ?)",
+        "INSERT OR REPLACE INTO sender_reputations (sender, failures, window_started_at, throttled_until, banned_until) VALUES (?, ?, ?, ?, ?)",
       )
-      .run(sender, failures, bannedUntil);
+      .run(sender, failures, windowStartedAt, throttledUntil, bannedUntil);
   }
 
   deleteSenderReputation(sender: string): void {
     this.db.prepare("DELETE FROM sender_reputations WHERE sender = ?").run(sender);
   }
 
-  loadSenderReputations(): Array<{ sender: string; failures: number; bannedUntil: number | null }> {
+  loadSenderReputations(): Array<{
+    sender: string;
+    failures: number;
+    windowStartedAt: number | null;
+    throttledUntil: number | null;
+    bannedUntil: number | null;
+  }> {
     const rows = this.db
-      .prepare("SELECT sender, failures, banned_until FROM sender_reputations")
-      .all() as Array<{ sender: string; failures: number; banned_until: number | null }>;
+      .prepare(
+        "SELECT sender, failures, window_started_at, throttled_until, banned_until FROM sender_reputations",
+      )
+      .all() as Array<{
+      sender: string;
+      failures: number;
+      window_started_at: number | null;
+      throttled_until: number | null;
+      banned_until: number | null;
+    }>;
 
     return rows.map((row) => ({
       sender: row.sender,
       failures: row.failures,
+      windowStartedAt: row.window_started_at,
+      throttledUntil: row.throttled_until,
       bannedUntil: row.banned_until,
     }));
   }
@@ -349,9 +389,9 @@ export class BundlerPersistenceStore {
   deleteExpiredSenderReputations(nowMs: number = Date.now()): void {
     this.db
       .prepare(
-        "DELETE FROM sender_reputations WHERE banned_until IS NOT NULL AND banned_until <= ?",
+        "DELETE FROM sender_reputations WHERE (banned_until IS NOT NULL AND banned_until <= ?) AND (throttled_until IS NULL OR throttled_until <= ?)",
       )
-      .run(nowMs);
+      .run(nowMs, nowMs);
   }
 
   close(): void {

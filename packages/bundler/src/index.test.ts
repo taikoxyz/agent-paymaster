@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 
 import { packPaymasterAndData, SERVO_SUPPORTED_ENTRY_POINTS } from "@agent-paymaster/shared";
 import {
+  type AdmissionSimulator,
   BundlerService,
   createBundlerApp,
   type BundlerPersistence,
@@ -61,6 +62,30 @@ class ThrowingGasSimulator implements GasSimulator {
   }
 }
 
+class PassingAdmissionSimulator implements AdmissionSimulator {
+  simulateValidation(
+    _userOperation: UserOperation,
+    _entryPoint: `0x${string}`,
+  ): Promise<void> {
+    void _userOperation;
+    void _entryPoint;
+    return Promise.resolve();
+  }
+}
+
+class RejectingAdmissionSimulator implements AdmissionSimulator {
+  constructor(private readonly message: string) {}
+
+  simulateValidation(
+    _userOperation: UserOperation,
+    _entryPoint: `0x${string}`,
+  ): Promise<void> {
+    void _userOperation;
+    void _entryPoint;
+    return Promise.reject(new Error(this.message));
+  }
+}
+
 class FakeBundlerPersistence implements BundlerPersistence {
   readonly pendingOperations = new Map<
     string,
@@ -90,7 +115,15 @@ class FakeBundlerPersistence implements BundlerPersistence {
       effectiveGasPrice: bigint | null;
     }
   >();
-  readonly senderReputations = new Map<string, { failures: number; bannedUntil: number | null }>();
+  readonly senderReputations = new Map<
+    string,
+    {
+      failures: number;
+      windowStartedAt: number | null;
+      throttledUntil: number | null;
+      bannedUntil: number | null;
+    }
+  >();
 
   savePendingOperation(
     hash: string,
@@ -253,18 +286,37 @@ class FakeBundlerPersistence implements BundlerPersistence {
     return deleted;
   }
 
-  saveSenderReputation(sender: string, failures: number, bannedUntil: number | null): void {
-    this.senderReputations.set(sender, { failures, bannedUntil });
+  saveSenderReputation(
+    sender: string,
+    failures: number,
+    windowStartedAt: number | null,
+    throttledUntil: number | null,
+    bannedUntil: number | null,
+  ): void {
+    this.senderReputations.set(sender, {
+      failures,
+      windowStartedAt,
+      throttledUntil,
+      bannedUntil,
+    });
   }
 
   deleteSenderReputation(sender: string): void {
     this.senderReputations.delete(sender);
   }
 
-  loadSenderReputations(): Array<{ sender: string; failures: number; bannedUntil: number | null }> {
+  loadSenderReputations(): Array<{
+    sender: string;
+    failures: number;
+    windowStartedAt: number | null;
+    throttledUntil: number | null;
+    bannedUntil: number | null;
+  }> {
     return [...this.senderReputations.entries()].map(([sender, value]) => ({
       sender,
       failures: value.failures,
+      windowStartedAt: value.windowStartedAt,
+      throttledUntil: value.throttledUntil,
       bannedUntil: value.bannedUntil,
     }));
   }
@@ -281,7 +333,7 @@ class FakeBundlerPersistence implements BundlerPersistence {
 describe("BundlerService", () => {
   let service: BundlerService;
 
-  it("defaults to the canonical Taiko entry point", () => {
+  it("defaults to the canonical Taiko entry point", async () => {
     const defaultService = new BundlerService();
     expect(defaultService.getSupportedEntryPoints()).toEqual([ENTRY_POINT_V08]);
   });
@@ -290,12 +342,14 @@ describe("BundlerService", () => {
     service = new BundlerService({
       chainId: 167000,
       entryPoints: [ENTRY_POINT_V08, ENTRY_POINT_V07],
-      reputationMaxFailures: 3,
+      reputationBanFailures: 5,
+      reputationThrottleFailures: 3,
       banWindowMs: 60_000,
+      admissionSimulator: new PassingAdmissionSimulator(),
     });
   });
 
-  it("returns service health", () => {
+  it("returns service health", async () => {
     const health = service.getHealth();
 
     expect(health.service).toBe("bundler");
@@ -314,16 +368,16 @@ describe("BundlerService", () => {
     expect(health.operationalMetrics.averageAcceptanceToInclusionMs).toBe(0);
   });
 
-  it("tracks mempool age distribution and lifecycle counters", () => {
-    const pendingHash = service.sendUserOperation(
+  it("tracks mempool age distribution and lifecycle counters", async () => {
+    const pendingHash = await service.sendUserOperation(
       buildUserOperation({ nonce: "0x10" }),
       ENTRY_POINT_V08,
     );
-    const revertedHash = service.sendUserOperation(
+    const revertedHash = await service.sendUserOperation(
       buildUserOperation({ nonce: "0x11" }),
       ENTRY_POINT_V08,
     );
-    const includedHash = service.sendUserOperation(
+    const includedHash = await service.sendUserOperation(
       buildUserOperation({ nonce: "0x12" }),
       ENTRY_POINT_V08,
     );
@@ -375,9 +429,12 @@ describe("BundlerService", () => {
     });
   });
 
-  it("defaults to shared supported entry points when none are configured", () => {
+  it("defaults to shared supported entry points when none are configured", async () => {
     const defaultService = new BundlerService();
-    expect(defaultService.getSupportedEntryPoints()).toEqual([...SERVO_SUPPORTED_ENTRY_POINTS]);
+    const expected = Array.isArray(SERVO_SUPPORTED_ENTRY_POINTS)
+      ? [...SERVO_SUPPORTED_ENTRY_POINTS]
+      : [ENTRY_POINT_V08];
+    expect(defaultService.getSupportedEntryPoints()).toEqual(expected);
   });
 
   it("estimates gas including taiko l1 data gas contribution", async () => {
@@ -450,8 +507,8 @@ describe("BundlerService", () => {
     expect(estimate.preVerificationGas).toBe("0x5210");
   });
 
-  it("stores pending user operations and resolves lookups", () => {
-    const userOpHash = service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08);
+  it("stores pending user operations and resolves lookups", async () => {
+    const userOpHash = await service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08);
     const lookup = service.getUserOperationByHash(userOpHash);
 
     expect(lookup).not.toBeNull();
@@ -460,13 +517,13 @@ describe("BundlerService", () => {
     expect(service.getPendingUserOperationsCount()).toBe(1);
   });
 
-  it("claims pending operations for submission by entry point", () => {
-    const firstHash = service.sendUserOperation(
+  it("claims pending operations for submission by entry point", async () => {
+    const firstHash = await service.sendUserOperation(
       buildUserOperation({ nonce: "0x1" }),
       ENTRY_POINT_V08,
     );
-    service.sendUserOperation(buildUserOperation({ nonce: "0x2" }), ENTRY_POINT_V07);
-    const thirdHash = service.sendUserOperation(
+    await service.sendUserOperation(buildUserOperation({ nonce: "0x2" }), ENTRY_POINT_V07);
+    const thirdHash = await service.sendUserOperation(
       buildUserOperation({ nonce: "0x3" }),
       ENTRY_POINT_V08,
     );
@@ -483,8 +540,8 @@ describe("BundlerService", () => {
     expect(service.getSubmittingUserOperationsCount()).toBe(2);
   });
 
-  it("records submission tx hashes and can release a claimed operation", () => {
-    const hash = service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08);
+  it("records submission tx hashes and can release a claimed operation", async () => {
+    const hash = await service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08);
     const claim = service.claimPendingUserOperations(1);
 
     expect(claim?.userOperations[0]?.hash).toBe(hash);
@@ -504,11 +561,11 @@ describe("BundlerService", () => {
     expect(service.getSubmittingUserOperationsCount()).toBe(0);
   });
 
-  it("uses canonical ERC-4337 userOpHash and ignores signature field", () => {
+  it("uses canonical ERC-4337 userOpHash and ignores signature field", async () => {
     const userOperation = buildUserOperation();
-    const hash = service.sendUserOperation(userOperation, ENTRY_POINT_V08);
+    const hash = await service.sendUserOperation(userOperation, ENTRY_POINT_V08);
 
-    const sameUserOpDifferentSignature = service.sendUserOperation(
+    const sameUserOpDifferentSignature = await service.sendUserOperation(
       buildUserOperation({ signature: "0x123456" }),
       ENTRY_POINT_V08,
     );
@@ -540,44 +597,69 @@ describe("BundlerService", () => {
     expect(hash).not.toBe(legacyHash);
   });
 
-  it("rejects a second pending operation with the same sender and nonce", () => {
-    service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08);
+  it("rejects a second pending operation with the same sender and nonce", async () => {
+    await service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08);
 
-    expect(() =>
+    await expect(
       service.sendUserOperation(
         buildUserOperation({ nonce: "0x01", callData: "0xabcd" }),
         ENTRY_POINT_V08,
       ),
-    ).toThrow("Conflicting pending operation");
+    ).rejects.toThrow("Conflicting pending operation");
   });
 
-  it("rejects empty signatures", () => {
-    expect(() =>
+  it("rejects empty signatures", async () => {
+    await expect(
       service.sendUserOperation(buildUserOperation({ signature: "0x" }), ENTRY_POINT_V08),
-    ).toThrow("signature must not be empty");
+    ).rejects.toThrow("signature must not be empty");
   });
 
-  it("rejects user operation submissions when automatic submission is disabled", () => {
+  it("rejects user operations with a mismatched chainId", async () => {
+    await expect(
+      service.sendUserOperation(
+        {
+          ...buildUserOperation(),
+          chainId: 167009,
+        },
+        ENTRY_POINT_V08,
+      ),
+    ).rejects.toThrow("chainId must match bundler chainId");
+  });
+
+  it("does not enqueue user operations when admission simulation fails", async () => {
+    const serviceWithFailingAdmission = new BundlerService({
+      chainId: 167000,
+      entryPoints: [ENTRY_POINT_V08],
+      admissionSimulator: new RejectingAdmissionSimulator("AA23 reverted"),
+    });
+
+    await expect(
+      serviceWithFailingAdmission.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08),
+    ).rejects.toThrow("validation failed");
+    expect(serviceWithFailingAdmission.getPendingUserOperationsCount()).toBe(0);
+  });
+
+  it("rejects user operation submissions when automatic submission is disabled", async () => {
     const readOnlyService = new BundlerService({
       chainId: 167000,
       entryPoints: [ENTRY_POINT_V08],
       acceptUserOperations: false,
     });
 
-    expect(() => readOnlyService.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08)).toThrow(
-      "Automatic submission is disabled",
-    );
+    await expect(
+      readOnlyService.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08),
+    ).rejects.toThrow("Automatic submission is disabled");
   });
 
-  it("normalizes legacy and packed paymasterAndData to the same canonical userOp hash", () => {
+  it("normalizes legacy and packed paymasterAndData to the same canonical userOp hash", async () => {
     const legacy = buildUserOperation({
       paymasterVerificationGasLimit: "0xea60",
       paymasterPostOpGasLimit: "0xafc8",
       paymasterAndData: "0x9999999999999999999999999999999999999999abcd",
     });
 
-    const hashFromLegacy = service.sendUserOperation(legacy, ENTRY_POINT_V08);
-    const hashFromPacked = service.sendUserOperation(
+    const hashFromLegacy = await service.sendUserOperation(legacy, ENTRY_POINT_V08);
+    const hashFromPacked = await service.sendUserOperation(
       buildUserOperation({
         paymasterVerificationGasLimit: "0xea60",
         paymasterPostOpGasLimit: "0xafc8",
@@ -594,8 +676,8 @@ describe("BundlerService", () => {
     expect(hashFromPacked).toBe(hashFromLegacy);
   });
 
-  it("derives missing paymaster gas limits from packed paymasterAndData", () => {
-    const hash = service.sendUserOperation(
+  it("derives missing paymaster gas limits from packed paymasterAndData", async () => {
+    const hash = await service.sendUserOperation(
       buildUserOperation({
         paymasterAndData: packPaymasterAndData({
           paymaster: "0x9999999999999999999999999999999999999999",
@@ -613,8 +695,8 @@ describe("BundlerService", () => {
     expect(lookup?.userOperation.paymasterPostOpGasLimit).toBe("0xafc8");
   });
 
-  it("creates a bundle and publishes receipts after submission", () => {
-    const userOpHash = service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08);
+  it("creates a bundle and publishes receipts after submission", async () => {
+    const userOpHash = await service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08);
     const bundle = service.createBundle(10);
 
     expect(bundle).not.toBeNull();
@@ -651,8 +733,8 @@ describe("BundlerService", () => {
     );
   });
 
-  it("stores failed bundle submission reason from revert metadata", () => {
-    const userOpHash = service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08);
+  it("stores failed bundle submission reason from revert metadata", async () => {
+    const userOpHash = await service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08);
     const bundle = service.createBundle(1);
     if (!bundle) {
       throw new Error("expected bundle to be created");
@@ -675,26 +757,26 @@ describe("BundlerService", () => {
     expect(receipt?.receipt.status).toBe("0x0");
   });
 
-  it("requeues the same userOp hash after a failed attempt", () => {
+  it("requeues the same userOp hash after a failed attempt", async () => {
     const userOp = buildUserOperation();
-    const userOpHash = service.sendUserOperation(userOp, ENTRY_POINT_V08);
+    const userOpHash = await service.sendUserOperation(userOp, ENTRY_POINT_V08);
 
     service.markUserOperationFailed(userOpHash, "simulation_failed");
     expect(service.getPendingUserOperationsCount()).toBe(0);
 
-    const retriedHash = service.sendUserOperation(userOp, ENTRY_POINT_V08);
+    const retriedHash = await service.sendUserOperation(userOp, ENTRY_POINT_V08);
     expect(retriedHash).toBe(userOpHash);
     expect(service.getPendingUserOperationsCount()).toBe(1);
     expect(service.getUserOperationReceipt(userOpHash)).toBeNull();
   });
 
-  it("bans senders after repeated invalid user operations", async () => {
+  it("does not penalize parse/shape errors", async () => {
     const invalidUserOp = {
       sender: "0x1111111111111111111111111111111111111111",
       callData: "0x1234",
     };
 
-    for (let index = 0; index < 3; index += 1) {
+    for (let index = 0; index < 6; index += 1) {
       const errorResponse = await service.handleJsonRpc({
         jsonrpc: "2.0",
         id: index,
@@ -708,17 +790,38 @@ describe("BundlerService", () => {
       }
     }
 
-    const bannedResponse = await service.handleJsonRpc({
-      jsonrpc: "2.0",
-      id: "blocked",
-      method: "eth_sendUserOperation",
-      params: [buildUserOperation(), ENTRY_POINT_V08],
+    const acceptedHash = await service.sendUserOperation(
+      buildUserOperation({
+        sender: "0x1111111111111111111111111111111111111111",
+        nonce: "0x10",
+      }),
+      ENTRY_POINT_V08,
+    );
+    expect(typeof acceptedHash).toBe("string");
+  });
+
+  it("throttles after repeated deterministic validation failures", async () => {
+    const throttledService = new BundlerService({
+      chainId: 167000,
+      entryPoints: [ENTRY_POINT_V08],
+      reputationThrottleFailures: 3,
+      reputationBanFailures: 5,
+      throttleWindowMs: 60_000,
+      admissionSimulator: new RejectingAdmissionSimulator("AA23 reverted"),
     });
 
-    expect(isErrorResponse(bannedResponse)).toBe(true);
-    if (isErrorResponse(bannedResponse)) {
-      expect(bannedResponse.error.code).toBe(-32001);
+    for (let index = 0; index < 3; index += 1) {
+      await expect(
+        throttledService.sendUserOperation(
+          buildUserOperation({ nonce: `0x${index + 1}` }),
+          ENTRY_POINT_V08,
+        ),
+      ).rejects.toThrow("validation failed");
     }
+
+    await expect(
+      throttledService.sendUserOperation(buildUserOperation({ nonce: "0x10" }), ENTRY_POINT_V08),
+    ).rejects.toThrow("temporarily throttled");
   });
 
   it("reloads pending operations and sender bans from persistence", async () => {
@@ -727,35 +830,37 @@ describe("BundlerService", () => {
       {
         chainId: 167000,
         entryPoints: [ENTRY_POINT_V08, ENTRY_POINT_V07],
-        reputationMaxFailures: 3,
+        reputationBanFailures: 3,
+        reputationThrottleFailures: 2,
+        throttleWindowMs: 1,
         banWindowMs: 60_000,
+        admissionSimulator: new PassingAdmissionSimulator(),
       },
       persistence,
     );
 
     const pendingUserOp = buildUserOperation({ nonce: "0x99" });
-    const pendingHash = firstService.sendUserOperation(pendingUserOp, ENTRY_POINT_V08);
+    const pendingHash = await firstService.sendUserOperation(pendingUserOp, ENTRY_POINT_V08);
 
-    const invalidUserOp = {
-      sender: "0x2222222222222222222222222222222222222222",
-      callData: "0x1234",
-    };
-
+    const failingSender = "0x2222222222222222222222222222222222222222";
     for (let index = 0; index < 3; index += 1) {
-      await firstService.handleJsonRpc({
-        jsonrpc: "2.0",
-        id: index,
-        method: "eth_sendUserOperation",
-        params: [invalidUserOp, ENTRY_POINT_V08],
-      });
+      const hash = await firstService.sendUserOperation(
+        buildUserOperation({ sender: failingSender, nonce: `0x${index + 1}` }),
+        ENTRY_POINT_V08,
+      );
+      firstService.markUserOperationFailed(hash, "simulation_failed");
+      await new Promise((resolve) => setTimeout(resolve, 2));
     }
 
     const secondService = new BundlerService(
       {
         chainId: 167000,
         entryPoints: [ENTRY_POINT_V08, ENTRY_POINT_V07],
-        reputationMaxFailures: 3,
+        reputationBanFailures: 3,
+        reputationThrottleFailures: 2,
+        throttleWindowMs: 1,
         banWindowMs: 60_000,
+        admissionSimulator: new PassingAdmissionSimulator(),
       },
       persistence,
     );
@@ -763,18 +868,18 @@ describe("BundlerService", () => {
     expect(secondService.getUserOperationByHash(pendingHash)?.entryPoint).toBe(ENTRY_POINT_V08);
     expect(secondService.getPendingUserOperationsCount()).toBe(1);
 
-    expect(() =>
+    await expect(
       secondService.sendUserOperation(
         buildUserOperation({
-          sender: "0x2222222222222222222222222222222222222222",
+          sender: failingSender,
           nonce: "0x10",
         }),
         ENTRY_POINT_V08,
       ),
-    ).toThrow("Sender is temporarily banned");
+    ).rejects.toThrow("Sender is temporarily banned");
   });
 
-  it("reloads finalized operation receipts from persistence", () => {
+  it("reloads finalized operation receipts from persistence", async () => {
     const persistence = new FakeBundlerPersistence();
     const firstService = new BundlerService(
       {
@@ -784,7 +889,7 @@ describe("BundlerService", () => {
       persistence,
     );
 
-    const userOpHash = firstService.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08);
+    const userOpHash = await firstService.sendUserOperation(buildUserOperation(), ENTRY_POINT_V08);
     const bundle = firstService.createBundle(1);
     if (!bundle) {
       throw new Error("expected bundle to be created");
@@ -819,7 +924,7 @@ describe("BundlerService", () => {
     expect(receipt?.actualGasUsed).toBe("0x55");
   });
 
-  it("prunes oldest finalized operations when retention limit is exceeded", () => {
+  it("prunes oldest finalized operations when retention limit is exceeded", async () => {
     const persistence = new FakeBundlerPersistence();
     const limitedService = new BundlerService(
       {
@@ -840,7 +945,7 @@ describe("BundlerService", () => {
     const hashes: string[] = [];
     try {
       for (const nonce of ["0x1", "0x2", "0x3"]) {
-        const hash = limitedService.sendUserOperation(
+        const hash = await limitedService.sendUserOperation(
           buildUserOperation({ nonce }),
           ENTRY_POINT_V08,
         );

@@ -456,7 +456,8 @@ describe("scenario: sender reputation and banning", () => {
     const stack = createTestStack({
       bundlerConfig: {
         entryPoints: [ENTRY_POINT_V08],
-        reputationMaxFailures: 3,
+        reputationBanFailures: 3,
+        reputationThrottleFailures: 2,
         banWindowMs: 60_000,
       },
     });
