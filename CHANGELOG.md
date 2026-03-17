@@ -10,6 +10,10 @@ Format:
 
 ## [Unreleased]
 
+### Added
+
+- Reintroduced `@agent-paymaster/sdk` with helper APIs for Servo cold-start flows (`getCounterfactualAddress`, `buildInitCode`, `buildUserOp`, `signPermit`, `signUserOp`, `createAndExecute`) plus unit tests and a gated Hekla integration test scaffold.
+
 ## [v0.2.3] - 2026-03-16
 
 ### Fixed

@@ -26,11 +26,12 @@ packages/
   api/           → Hono HTTP gateway (quotes, RPC proxy, metrics)  :3000
   bundler/       → ERC-4337 bundler (mempool, auto-submitter, receipts)  :3001
   shared/        → Types, EIP-712 helpers, paymaster data packing
+  sdk/           → TypeScript SDK (counterfactual account + permit + UserOp helpers)
   paymaster-contracts/ → Solidity (Foundry): TaikoUsdcPaymaster, ServoAccount, ServoAccountFactory
   web/           → Next.js 15 landing page (Tailwind 4)
 ```
 
-**Dependency flow**: `shared` ← `api`, `bundler`. No circular deps. `web` is standalone.
+**Dependency flow**: `shared` ← `api`, `bundler`. `sdk` is standalone (RPC + viem). No circular deps.
 
 ## Architecture (How It Works)
 
