@@ -8,7 +8,11 @@ import { EntryPointMonitor } from "./entrypoint-monitor.js";
 import { logEvent } from "./logger.js";
 import { MetricsRegistry } from "./metrics.js";
 import { openApiDocument } from "./openapi.js";
-import { PaymasterService, type PaymasterServiceConfigInput } from "./paymaster-service.js";
+import {
+  PaymasterRpcError,
+  PaymasterService,
+  type PaymasterServiceConfigInput,
+} from "./paymaster-service.js";
 import {
   ChainlinkOracleSource,
   CoinbaseOracleSource,
@@ -506,9 +510,12 @@ export const createApp = (options: CreateAppOptions = {}): Hono => {
         method: payload.method,
         error: error instanceof Error ? error.message : "rpc_handler_failure",
       });
-      const response = makeJsonRpcError(payload.id, RPC_INTERNAL_ERROR, "Internal error", {
-        reason: "rpc_handler_failure",
-      });
+      const response =
+        error instanceof PaymasterRpcError
+          ? makeJsonRpcError(payload.id, error.code, error.message, error.data)
+          : makeJsonRpcError(payload.id, RPC_INTERNAL_ERROR, "Internal error", {
+              reason: "rpc_handler_failure",
+            });
 
       metrics.recordRpc(payload.method, "error");
       const result = c.json(response, 200);

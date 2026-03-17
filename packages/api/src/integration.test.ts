@@ -386,6 +386,31 @@ describe("scenario: invalid UserOp fields", () => {
     expect(res.error).toBeDefined();
   });
 
+  it("rejects unsupported entry point in paymaster quote methods with explicit error", async () => {
+    const userOp = makeUserOp();
+    const badEntryPoint = "0xDeaDDeaDDeaDDeaDDeaDDeaDDeaDDeaDDeaDDeaD";
+
+    const dataRes = await rpc(stack.app, "pm_getPaymasterData", [
+      userOp,
+      badEntryPoint,
+      "taikoMainnet",
+      {},
+    ]);
+    expect(dataRes.error?.code).toBe(-32602);
+    expect(dataRes.error?.message).toBe("Unsupported entryPoint");
+    expect(dataRes.error?.data?.reason).toBe("entrypoint_unsupported");
+
+    const stubRes = await rpc(stack.app, "pm_getPaymasterStubData", [
+      userOp,
+      badEntryPoint,
+      "taikoMainnet",
+      {},
+    ]);
+    expect(stubRes.error?.code).toBe(-32602);
+    expect(stubRes.error?.message).toBe("Unsupported entryPoint");
+    expect(stubRes.error?.data?.reason).toBe("entrypoint_unsupported");
+  });
+
   it("rejects non-JSON body on /rpc", async () => {
     const response = await stack.app.request("/rpc", {
       method: "POST",

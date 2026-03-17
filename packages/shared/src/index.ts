@@ -2,6 +2,13 @@ export type ChainName = "taikoMainnet" | "taikoHekla" | "taikoHoodi";
 export type HexString = `0x${string}`;
 export type Address = `0x${string}`;
 
+/** Canonical EntryPoint for Servo's Taiko ERC-4337 flow. */
+export const SERVO_TAIKO_ENTRY_POINT_V08: Address =
+  "0x0000000071727de22e5e9d8baf0edac6f37da032";
+
+/** EntryPoints Servo can actually execute through the configured paymaster path. */
+export const SERVO_SUPPORTED_ENTRY_POINTS = [SERVO_TAIKO_ENTRY_POINT_V08] as const;
+
 export interface RpcConfig {
   chain: ChainName;
   rpcUrl: string;

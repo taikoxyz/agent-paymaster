@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   packPaymasterAndData,
   PAYMASTER_DATA_PARAMETERS,
+  SERVO_SUPPORTED_ENTRY_POINTS,
   SPONSORED_USER_OPERATION_TYPES,
 } from "@agent-paymaster/shared";
 import { concatHex, encodeAbiParameters, keccak256, toHex } from "viem";
@@ -24,6 +25,7 @@ const UINT128_MAX = (1n << 128n) - 1n;
 const UINT48_MAX = (1n << 48n) - 1n;
 const UINT32_MAX = (1n << 32n) - 1n;
 const UINT16_MAX = (1n << 16n) - 1n;
+const RPC_INVALID_PARAMS = -32602;
 
 interface QuoteData {
   token: `0x${string}`;
@@ -106,6 +108,18 @@ interface ParsedQuoteInput {
   maxPriorityFeePerGas: bigint;
 }
 
+export class PaymasterRpcError extends Error {
+  readonly code: number;
+  readonly data?: Record<string, unknown>;
+
+  constructor(code: number, message: string, data?: Record<string, unknown>) {
+    super(message);
+    this.name = "PaymasterRpcError";
+    this.code = code;
+    this.data = data;
+  }
+}
+
 export interface PaymasterQuote {
   quoteId: string;
   chain: ChainName;
@@ -134,6 +148,7 @@ export interface PaymasterServiceConfig {
   quoteTtlSeconds: number;
   surchargeBps: number;
   quoteSignerPrivateKey: `0x${string}`;
+  supportedEntryPoints: string[];
   defaultPaymasterVerificationGasLimit: bigint;
   defaultPaymasterPostOpGasLimit: bigint;
   tokenAddresses: Partial<Record<ChainName, string>>;
@@ -142,8 +157,9 @@ export interface PaymasterServiceConfig {
 
 export type PaymasterServiceConfigInput = Omit<
   Partial<PaymasterServiceConfig>,
-  "tokenAddresses" | "priceProvider"
+  "tokenAddresses" | "priceProvider" | "supportedEntryPoints"
 > & {
+  supportedEntryPoints?: string[];
   tokenAddresses?: Partial<Record<ChainName, string>>;
   priceProvider?: PriceProvider;
 };
@@ -282,6 +298,30 @@ const normalizeOptionalTokenAddresses = (
   return normalized;
 };
 
+const normalizeSupportedEntryPoints = (entryPoints: string[] | undefined): string[] => {
+  const resolved = entryPoints ?? [...SERVO_SUPPORTED_ENTRY_POINTS];
+  if (resolved.length === 0) {
+    throw new Error("supportedEntryPoints must contain at least one address");
+  }
+
+  return resolved.map((entryPoint) => normalizeAddress(entryPoint, "supportedEntryPoints"));
+};
+
+const assertSupportedEntryPoint = (
+  entryPoint: string,
+  supportedEntryPoints: string[],
+): void => {
+  if (supportedEntryPoints.includes(entryPoint)) {
+    return;
+  }
+
+  throw new PaymasterRpcError(RPC_INVALID_PARAMS, "Unsupported entryPoint", {
+    reason: "entrypoint_unsupported",
+    entryPoint,
+    supportedEntryPoints,
+  });
+};
+
 const parseGasEstimate = (
   value: unknown,
   defaults: {
@@ -409,6 +449,7 @@ export class PaymasterService {
     }
 
     const normalizedTokenAddresses = normalizeOptionalTokenAddresses(tokenAddresses);
+    const supportedEntryPoints = normalizeSupportedEntryPoints(config.supportedEntryPoints);
     if (Object.keys(normalizedTokenAddresses).length === 0) {
       throw new Error("At least one chain token address must be configured");
     }
@@ -423,6 +464,7 @@ export class PaymasterService {
       quoteTtlSeconds: Math.max(15, config.quoteTtlSeconds ?? OPERATIONAL_DEFAULTS.quoteTtlSeconds),
       surchargeBps,
       quoteSignerPrivateKey,
+      supportedEntryPoints,
       defaultPaymasterVerificationGasLimit:
         config.defaultPaymasterVerificationGasLimit ??
         OPERATIONAL_DEFAULTS.defaultPaymasterVerificationGasLimit,
@@ -446,6 +488,7 @@ export class PaymasterService {
       quoteTtlSeconds: this.config.quoteTtlSeconds,
       supportedChains,
       supportedTokens: ["USDC"],
+      supportedEntryPoints: this.config.supportedEntryPoints,
       signerAddress: this.quoteSigner.address,
       priceSource: this.config.priceProvider.describe(),
     };
@@ -453,6 +496,7 @@ export class PaymasterService {
 
   async quote(input: unknown, permit: PermitData = EMPTY_PERMIT): Promise<PaymasterQuote> {
     const parsed = parseQuoteInput(input);
+    assertSupportedEntryPoint(parsed.entryPoint, this.config.supportedEntryPoints);
     const tokenAddress = this.config.tokenAddresses[parsed.chain.name];
 
     if (tokenAddress === undefined) {
@@ -618,7 +662,14 @@ export class PaymasterService {
     }
 
     if (!Array.isArray(params) || params.length < 2) {
-      throw new Error("Paymaster RPC params must be [userOperation, entryPoint, chain]");
+      throw new PaymasterRpcError(
+        RPC_INVALID_PARAMS,
+        "Paymaster RPC params must be [userOperation, entryPoint, chain]",
+        {
+          reason: "params_invalid",
+          method,
+        },
+      );
     }
 
     const [userOperation, entryPoint, chainMaybe, contextMaybe] = params;

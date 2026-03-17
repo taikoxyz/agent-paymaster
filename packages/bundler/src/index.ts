@@ -1,4 +1,8 @@
-import { buildHealth, normalizePaymasterAndData } from "@agent-paymaster/shared";
+import {
+  buildHealth,
+  normalizePaymasterAndData,
+  SERVO_SUPPORTED_ENTRY_POINTS,
+} from "@agent-paymaster/shared";
 import { serve } from "@hono/node-server";
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
@@ -367,10 +371,10 @@ export class BundlerService {
   constructor(config: BundlerConfigInput = {}, persistence?: BundlerPersistence) {
     this.config = {
       chainId: config.chainId ?? 167000,
-      entryPoints: config.entryPoints?.map((entryPoint) => normalizeAddress(entryPoint)) ?? [
-        "0x0000000071727de22e5e9d8baf0edac6f37da032",
-        "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789",
-      ],
+      entryPoints:
+        config.entryPoints?.map((entryPoint) => normalizeAddress(entryPoint)) ?? [
+          ...SERVO_SUPPORTED_ENTRY_POINTS,
+        ],
       acceptUserOperations: config.acceptUserOperations ?? true,
       reputationMaxFailures: config.reputationMaxFailures ?? 3,
       banWindowMs: config.banWindowMs ?? 5 * 60 * 1000,

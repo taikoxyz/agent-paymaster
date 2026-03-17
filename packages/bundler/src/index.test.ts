@@ -147,6 +147,11 @@ class FakeBundlerPersistence implements BundlerPersistence {
 describe("BundlerService", () => {
   let service: BundlerService;
 
+  it("defaults to the canonical Taiko entry point", () => {
+    const defaultService = new BundlerService();
+    expect(defaultService.getSupportedEntryPoints()).toEqual([ENTRY_POINT_V08]);
+  });
+
   beforeEach(() => {
     service = new BundlerService({
       chainId: 167000,

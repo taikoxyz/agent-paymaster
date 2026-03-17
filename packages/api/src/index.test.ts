@@ -183,6 +183,37 @@ describe("api gateway", () => {
     expect(estimateCall).toBeDefined();
   });
 
+  it("rejects unsupported paymaster entryPoint before bundler estimation", async () => {
+    const bundlerClient = new FakeBundlerClient();
+    const app = createTestApp(bundlerClient);
+
+    const response = await app.request("/rpc", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 8,
+        method: "pm_getPaymasterData",
+        params: [
+          SAMPLE_USER_OPERATION,
+          "0xDeaDDeaDDeaDDeaDDeaDDeaDDeaDDeaDDeaDDeaD",
+          "taikoMainnet",
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+
+    const payload = await response.json();
+    expect(payload.error.code).toBe(-32602);
+    expect(payload.error.message).toBe("Unsupported entryPoint");
+    expect(payload.error.data?.reason).toBe("entrypoint_unsupported");
+    expect(payload.error.data?.supportedEntryPoints).toEqual([ENTRY_POINT_V08]);
+    expect(bundlerClient.rpcCalls).toHaveLength(0);
+  });
+
   it("exports metrics in Prometheus format", async () => {
     const bundlerClient = new FakeBundlerClient();
     const app = createTestApp(bundlerClient);
