@@ -65,7 +65,52 @@ class FakeBundlerClient implements BundlerClient {
     return {
       status: "ok" as const,
       latencyMs: 2,
-      details: { service: "bundler" },
+      details: {
+        service: "bundler",
+        pendingUserOperations: 1,
+        submittingUserOperations: 0,
+        mempoolDepth: {
+          pending: 1,
+          submitting: 0,
+          total: 1,
+        },
+        mempoolAgeMs: {
+          pendingOldest: 2300,
+          submittingOldest: 0,
+        },
+        mempoolAgeDistribution: {
+          pending: {
+            le_30000ms: 1,
+            le_60000ms: 0,
+            le_300000ms: 0,
+            le_900000ms: 0,
+            gt_900000ms: 0,
+          },
+          submitting: {
+            le_30000ms: 0,
+            le_60000ms: 0,
+            le_300000ms: 0,
+            le_900000ms: 0,
+            gt_900000ms: 0,
+          },
+        },
+        submitter: {
+          lastKnownBalanceWei: "123000000000000000",
+        },
+        operationalMetrics: {
+          userOpsAcceptedTotal: 2,
+          userOpsIncludedTotal: 1,
+          userOpsFailedTotal: 1,
+          acceptanceToInclusionSuccessRate: 0.5,
+          averageAcceptanceToInclusionMs: 1800,
+          simulationFailureReasons: {
+            simulation_failed: 1,
+          },
+          revertReasons: {
+            AA23_reverted: 1,
+          },
+        },
+      },
     };
   }
 }
@@ -312,6 +357,11 @@ describe("api gateway", () => {
     const body = await response.text();
     expect(body).toContain("api_http_requests_total");
     expect(body).toContain("api_http_request_duration_ms_count");
+    expect(body).toContain('api_bundler_mempool_depth{state="pending"} 1');
+    expect(body).toContain("api_userop_acceptance_to_inclusion_success_ratio 0.5");
+    expect(body).toContain("api_quote_to_submission_conversion_ratio 0");
+    expect(body).toContain('api_userop_simulation_failures_total{reason="simulation_failed"} 1');
+    expect(body).toContain('api_userop_revert_reasons_total{reason="AA23_reverted"} 1');
   });
 
   it("serves OpenAPI description", async () => {

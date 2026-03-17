@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { EntryPointMonitor } from "./entrypoint-monitor.js";
 
 const PAYMASTER_ADDRESS = "0xCa675148201E29b13A848cE30c3074c8dE995891";
+const DEPOSITS_SELECTOR = "0xfc7e286d";
 
 const createMockFetch = (balanceHex: string) =>
   (async () =>
@@ -133,7 +134,20 @@ describe("EntryPointMonitor", () => {
 
     const parsed = JSON.parse(capturedBody!);
     const calldata = parsed.params[0].data as string;
-    expect(calldata).toMatch(/^0x70a08231/);
+    expect(calldata).toMatch(new RegExp(`^${DEPOSITS_SELECTOR}`));
     expect(calldata.toLowerCase()).toContain(PAYMASTER_ADDRESS.slice(2).toLowerCase());
+  });
+
+  it("reads deposit balance from deposits(address) tuple response", async () => {
+    const depositWei = 1_200_000_000_000_000n;
+    const tupleResult = `0x${depositWei.toString(16).padStart(64, "0")}${"0".repeat(64 * 4)}`;
+    const monitor = new EntryPointMonitor({
+      paymasterAddress: PAYMASTER_ADDRESS,
+      fetchImpl: createMockFetch(tupleResult),
+    });
+
+    const result = await monitor.checkDeposit();
+    expect(result.status).toBe("low");
+    expect(result.balanceWei).toBe(depositWei.toString());
   });
 });

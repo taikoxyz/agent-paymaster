@@ -184,4 +184,26 @@ export class MetricsRegistry {
 
     return snapshot;
   }
+
+  getCounterSum(name: string, labels: Record<string, string> = {}): number {
+    let total = 0;
+
+    for (const [nameKey, record] of this.counters.entries()) {
+      const [recordName] = nameKey.split("|", 2);
+      if (recordName !== name) {
+        continue;
+      }
+
+      const hasAllLabels = Object.entries(labels).every(
+        ([key, value]) => record.labels[key] === value,
+      );
+      if (!hasAllLabels) {
+        continue;
+      }
+
+      total += record.value;
+    }
+
+    return total;
+  }
 }

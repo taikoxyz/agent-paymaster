@@ -368,6 +368,14 @@ describe("BundlerSubmitter", () => {
     expect(receipt?.actualGasCost).toBe("0x78");
     expect(receipt?.actualGasUsed).toBe("0x1e");
     expect(receipt?.receipt.transactionHash).toBe(client.nextTransactionHash);
+    expect(service.getHealth().operationalMetrics).toMatchObject({
+      userOpsAcceptedTotal: 1,
+      userOpsIncludedTotal: 1,
+      userOpsFailedTotal: 0,
+      acceptanceToInclusionSuccessRate: 1,
+      simulationFailureReasons: {},
+      revertReasons: {},
+    });
   });
 
   it("marks a single operation as failed when simulation fails", async () => {
@@ -392,6 +400,70 @@ describe("BundlerSubmitter", () => {
     expect(service.getSubmittingUserOperationsCount()).toBe(0);
     expect(service.getUserOperationReceipt(userOpHash)).toBeNull();
     expect(client.submittedTransactions).toHaveLength(0);
+    expect(service.getHealth().operationalMetrics).toMatchObject({
+      userOpsAcceptedTotal: 1,
+      userOpsIncludedTotal: 0,
+      userOpsFailedTotal: 1,
+      acceptanceToInclusionSuccessRate: 0,
+      simulationFailureReasons: { AA23_reverted: 1 },
+    });
+  });
+
+  it("tracks mixed finalize outcomes from receipt events in operational metrics", async () => {
+    const client = new FakeSubmissionClient();
+    const service = new BundlerService({
+      chainId: 167000,
+      entryPoints: [ENTRY_POINT_V08],
+    });
+    const includedHash = service.sendUserOperation(
+      buildUserOperation({ nonce: "0x10" }),
+      ENTRY_POINT_V08,
+    );
+    const failedHash = service.sendUserOperation(
+      buildUserOperation({ nonce: "0x11" }),
+      ENTRY_POINT_V08,
+    );
+    const submitter = new BundlerSubmitter(service, {
+      chainRpcUrl: "https://rpc.mainnet.taiko.xyz",
+      privateKey: `0x${"1".repeat(64)}`,
+      client,
+      pollIntervalMs: 10,
+      maxOperationsPerBundle: 2,
+    });
+
+    await submitter.tick();
+
+    client.receipts.set(client.nextTransactionHash, {
+      transactionHash: client.nextTransactionHash,
+      blockHash: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      blockNumber: 124n,
+      status: "success",
+      effectiveGasPrice: 9n,
+      logs: [
+        makeUserOperationEventLog(includedHash as HexString, buildUserOperation().sender, {
+          success: true,
+          actualGasCost: 50n,
+          actualGasUsed: 25n,
+        }),
+        makeUserOperationEventLog(failedHash as HexString, buildUserOperation().sender, {
+          success: false,
+          actualGasCost: 80n,
+          actualGasUsed: 40n,
+        }),
+      ],
+    });
+
+    await submitter.tick();
+
+    expect(service.getUserOperationReceipt(includedHash)?.success).toBe(true);
+    expect(service.getUserOperationReceipt(failedHash)?.success).toBe(false);
+    expect(service.getHealth().operationalMetrics).toMatchObject({
+      userOpsAcceptedTotal: 2,
+      userOpsIncludedTotal: 1,
+      userOpsFailedTotal: 1,
+      acceptanceToInclusionSuccessRate: 0.5,
+      revertReasons: { execution_reverted: 1 },
+    });
   });
 
   it("marks malformed operations as failed instead of crashing the submitter", async () => {

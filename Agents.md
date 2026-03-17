@@ -57,6 +57,8 @@ Bundler lifecycle notes: pending and finalized UserOps are persisted in SQLite s
 | GET    | `/metrics`      | Prometheus metrics                         |
 | GET    | `/openapi.json` | OpenAPI 3.1 spec                           |
 
+Monitoring signals exposed in `/metrics` include submitter ETH balance, mempool depth and age buckets, acceptance-to-inclusion success/latency, quote-to-submission conversion, and failure reason distributions.
+
 ## Contracts
 
 **Solidity 0.8.24** with Foundry (optimizer 200 runs, via-ir, Cancun EVM).

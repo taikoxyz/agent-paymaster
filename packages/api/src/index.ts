@@ -4,7 +4,7 @@ import { buildHealth } from "@agent-paymaster/shared";
 import { Hono } from "hono";
 
 import { type BundlerClient, HttpBundlerClient } from "./bundler-client.js";
-import { EntryPointMonitor } from "./entrypoint-monitor.js";
+import { EntryPointMonitor, type DepositHealth } from "./entrypoint-monitor.js";
 import { logEvent } from "./logger.js";
 import { MetricsRegistry } from "./metrics.js";
 import { openApiDocument } from "./openapi.js";
@@ -27,6 +27,7 @@ import {
   SenderChurnTracker,
 } from "./rate-limit.js";
 import {
+  type DependencyHealth,
   type JsonRpcId,
   type JsonRpcResponse,
   isJsonRpcFailure,
@@ -321,6 +322,320 @@ const KNOWN_ROUTES = new Set([
 const resolveRouteLabel = (path: string): string =>
   path === "/" ? "/" : KNOWN_ROUTES.has(path) ? path : "<unknown>";
 
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  isObject(value) ? value : null;
+
+const parseNonNegativeNumber = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return parsed;
+    }
+  }
+
+  return null;
+};
+
+const parseUnsignedIntegerString = (value: unknown): string | null => {
+  if (typeof value === "string" && /^[0-9]+$/u.test(value)) {
+    return value;
+  }
+
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
+    return String(value);
+  }
+
+  return null;
+};
+
+const parseNumericRecord = (value: unknown): Record<string, number> => {
+  const source = asRecord(value);
+  if (source === null) {
+    return {};
+  }
+
+  const parsed: Record<string, number> = {};
+  for (const [key, raw] of Object.entries(source)) {
+    const numeric = parseNonNegativeNumber(raw);
+    if (numeric !== null) {
+      parsed[key] = numeric;
+    }
+  }
+
+  return parsed;
+};
+
+interface RuntimeMonitoringSnapshot {
+  entryPointDepositWei: string | null;
+  submitterBalanceWei: string | null;
+  mempoolDepth: {
+    pending: number;
+    submitting: number;
+    total: number;
+  };
+  mempoolAgeMs: {
+    pendingOldest: number;
+    submittingOldest: number;
+  };
+  mempoolAgeDistribution: {
+    pending: Record<string, number>;
+    submitting: Record<string, number>;
+  };
+  userOpsAcceptedTotal: number;
+  userOpsIncludedTotal: number;
+  userOpsFailedTotal: number;
+  acceptanceToInclusionSuccessRate: number;
+  averageAcceptanceToInclusionMs: number;
+  quoteToSubmissionConversionRate: number;
+  simulationFailureReasons: Record<string, number>;
+  revertReasons: Record<string, number>;
+}
+
+const extractRuntimeMonitoringSnapshot = (
+  bundlerHealth: DependencyHealth,
+  depositHealth: DepositHealth | undefined,
+  successfulQuoteCount: number,
+): RuntimeMonitoringSnapshot => {
+  const details = asRecord(bundlerHealth.details);
+  const submitter = asRecord(details?.submitter);
+  const mempoolDepth = asRecord(details?.mempoolDepth);
+  const mempoolAgeMs = asRecord(details?.mempoolAgeMs);
+  const mempoolAgeDistribution = asRecord(details?.mempoolAgeDistribution);
+  const operationalMetrics = asRecord(details?.operationalMetrics);
+
+  const pendingDepth =
+    parseNonNegativeNumber(mempoolDepth?.pending) ??
+    parseNonNegativeNumber(details?.pendingUserOperations) ??
+    0;
+  const submittingDepth =
+    parseNonNegativeNumber(mempoolDepth?.submitting) ??
+    parseNonNegativeNumber(details?.submittingUserOperations) ??
+    0;
+  const totalDepth = parseNonNegativeNumber(mempoolDepth?.total) ?? pendingDepth + submittingDepth;
+
+  const acceptedTotal = parseNonNegativeNumber(operationalMetrics?.userOpsAcceptedTotal) ?? 0;
+  const includedTotal = parseNonNegativeNumber(operationalMetrics?.userOpsIncludedTotal) ?? 0;
+  const failedTotal = parseNonNegativeNumber(operationalMetrics?.userOpsFailedTotal) ?? 0;
+
+  const derivedSuccessRate =
+    acceptedTotal === 0 ? 0 : Number((includedTotal / acceptedTotal).toFixed(6));
+  const successRate =
+    parseNonNegativeNumber(operationalMetrics?.acceptanceToInclusionSuccessRate) ??
+    derivedSuccessRate;
+  const averageAcceptanceToInclusionMs =
+    parseNonNegativeNumber(operationalMetrics?.averageAcceptanceToInclusionMs) ?? 0;
+
+  return {
+    entryPointDepositWei: parseUnsignedIntegerString(depositHealth?.balanceWei),
+    submitterBalanceWei: parseUnsignedIntegerString(submitter?.lastKnownBalanceWei),
+    mempoolDepth: {
+      pending: pendingDepth,
+      submitting: submittingDepth,
+      total: totalDepth,
+    },
+    mempoolAgeMs: {
+      pendingOldest: parseNonNegativeNumber(mempoolAgeMs?.pendingOldest) ?? 0,
+      submittingOldest: parseNonNegativeNumber(mempoolAgeMs?.submittingOldest) ?? 0,
+    },
+    mempoolAgeDistribution: {
+      pending: parseNumericRecord(mempoolAgeDistribution?.pending),
+      submitting: parseNumericRecord(mempoolAgeDistribution?.submitting),
+    },
+    userOpsAcceptedTotal: acceptedTotal,
+    userOpsIncludedTotal: includedTotal,
+    userOpsFailedTotal: failedTotal,
+    acceptanceToInclusionSuccessRate: successRate,
+    averageAcceptanceToInclusionMs,
+    quoteToSubmissionConversionRate:
+      successfulQuoteCount === 0 ? 0 : Number((acceptedTotal / successfulQuoteCount).toFixed(6)),
+    simulationFailureReasons: parseNumericRecord(operationalMetrics?.simulationFailureReasons),
+    revertReasons: parseNumericRecord(operationalMetrics?.revertReasons),
+  };
+};
+
+const formatPrometheusLabels = (labels: Record<string, string>): string => {
+  const entries = Object.entries(labels);
+  if (entries.length === 0) {
+    return "";
+  }
+
+  const serialized = entries
+    .map(([key, value]) => `${key}="${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`)
+    .join(",");
+  return `{${serialized}}`;
+};
+
+interface PrometheusSample {
+  labels?: Record<string, string>;
+  value: number | string;
+}
+
+const appendMetricBlock = (
+  lines: string[],
+  name: string,
+  help: string,
+  type: "gauge" | "counter",
+  samples: PrometheusSample[],
+): void => {
+  lines.push(`# HELP ${name} ${help}`);
+  lines.push(`# TYPE ${name} ${type}`);
+
+  for (const sample of samples) {
+    const labels = sample.labels ? formatPrometheusLabels(sample.labels) : "";
+    lines.push(`${name}${labels} ${sample.value}`);
+  }
+};
+
+const renderRuntimeMonitoringPrometheus = (snapshot: RuntimeMonitoringSnapshot): string => {
+  const lines: string[] = [];
+
+  if (snapshot.entryPointDepositWei !== null) {
+    appendMetricBlock(
+      lines,
+      "api_entrypoint_deposit_wei",
+      "Current EntryPoint paymaster deposit balance in wei",
+      "gauge",
+      [{ value: snapshot.entryPointDepositWei }],
+    );
+  }
+
+  if (snapshot.submitterBalanceWei !== null) {
+    appendMetricBlock(
+      lines,
+      "api_bundler_submitter_balance_wei",
+      "Current bundler submitter ETH balance in wei",
+      "gauge",
+      [{ value: snapshot.submitterBalanceWei }],
+    );
+  }
+
+  appendMetricBlock(
+    lines,
+    "api_bundler_mempool_depth",
+    "Current bundler mempool depth by state",
+    "gauge",
+    [
+      { labels: { state: "pending" }, value: snapshot.mempoolDepth.pending },
+      { labels: { state: "submitting" }, value: snapshot.mempoolDepth.submitting },
+      { labels: { state: "total" }, value: snapshot.mempoolDepth.total },
+    ],
+  );
+
+  appendMetricBlock(
+    lines,
+    "api_bundler_mempool_oldest_age_ms",
+    "Oldest user operation age in the bundler mempool by state",
+    "gauge",
+    [
+      { labels: { state: "pending" }, value: snapshot.mempoolAgeMs.pendingOldest },
+      { labels: { state: "submitting" }, value: snapshot.mempoolAgeMs.submittingOldest },
+    ],
+  );
+
+  const ageDistributionSamples: PrometheusSample[] = [];
+  for (const [bucket, value] of Object.entries(snapshot.mempoolAgeDistribution.pending).sort()) {
+    ageDistributionSamples.push({
+      labels: { state: "pending", bucket },
+      value,
+    });
+  }
+  for (const [bucket, value] of Object.entries(snapshot.mempoolAgeDistribution.submitting).sort()) {
+    ageDistributionSamples.push({
+      labels: { state: "submitting", bucket },
+      value,
+    });
+  }
+  if (ageDistributionSamples.length > 0) {
+    appendMetricBlock(
+      lines,
+      "api_bundler_mempool_age_bucket",
+      "Bundler mempool age distribution counts by bucket and state",
+      "gauge",
+      ageDistributionSamples,
+    );
+  }
+
+  appendMetricBlock(
+    lines,
+    "api_userop_lifecycle_total",
+    "Bundler user operation lifecycle counters since process start",
+    "gauge",
+    [
+      { labels: { stage: "accepted" }, value: snapshot.userOpsAcceptedTotal },
+      { labels: { stage: "included" }, value: snapshot.userOpsIncludedTotal },
+      { labels: { stage: "failed" }, value: snapshot.userOpsFailedTotal },
+    ],
+  );
+
+  appendMetricBlock(
+    lines,
+    "api_userop_acceptance_to_inclusion_success_ratio",
+    "Ratio of accepted user operations that reached successful inclusion",
+    "gauge",
+    [{ value: snapshot.acceptanceToInclusionSuccessRate }],
+  );
+
+  appendMetricBlock(
+    lines,
+    "api_userop_acceptance_to_inclusion_avg_ms",
+    "Average milliseconds from acceptance to successful inclusion",
+    "gauge",
+    [{ value: snapshot.averageAcceptanceToInclusionMs }],
+  );
+
+  appendMetricBlock(
+    lines,
+    "api_quote_to_submission_conversion_ratio",
+    "Ratio of successful paymaster quotes to accepted user operations",
+    "gauge",
+    [{ value: snapshot.quoteToSubmissionConversionRate }],
+  );
+
+  const simulationFailureSamples: PrometheusSample[] = Object.entries(
+    snapshot.simulationFailureReasons,
+  )
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([reason, value]) => ({
+      labels: { reason },
+      value,
+    }));
+  if (simulationFailureSamples.length > 0) {
+    appendMetricBlock(
+      lines,
+      "api_userop_simulation_failures_total",
+      "Distribution of simulation and admission-time failure reasons",
+      "gauge",
+      simulationFailureSamples,
+    );
+  }
+
+  const revertReasonSamples: PrometheusSample[] = Object.entries(snapshot.revertReasons)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([reason, value]) => ({
+      labels: { reason },
+      value,
+    }));
+  if (revertReasonSamples.length > 0) {
+    appendMetricBlock(
+      lines,
+      "api_userop_revert_reasons_total",
+      "Distribution of on-chain handleOps revert reasons",
+      "gauge",
+      revertReasonSamples,
+    );
+  }
+
+  if (lines.length === 0) {
+    return "";
+  }
+
+  return `${lines.join("\n")}\n`;
+};
+
 const mergeConfig = (base: ApiConfig, override: Partial<ApiConfig> | undefined): ApiConfig => {
   if (override === undefined) {
     return base;
@@ -494,9 +809,24 @@ export const createApp = (options: CreateAppOptions = {}): Hono => {
 
   app.get("/capabilities", (c) => c.json(paymasterService.getCapabilities()));
 
-  app.get("/metrics", (c) => {
+  app.get("/metrics", async (c) => {
+    const [bundlerHealth, depositHealth] = await Promise.all([
+      bundlerClient.health(),
+      entryPointMonitor?.checkDeposit() ?? Promise.resolve(undefined),
+    ]);
+    const successfulQuotes = metrics.getCounterSum("api_paymaster_quotes_total", {
+      result: "ok",
+    });
+    const runtimeSnapshot = extractRuntimeMonitoringSnapshot(
+      bundlerHealth,
+      depositHealth,
+      successfulQuotes,
+    );
+
     c.header("Content-Type", "text/plain; version=0.0.4");
-    return c.body(metrics.renderPrometheus());
+    return c.body(
+      `${metrics.renderPrometheus()}${renderRuntimeMonitoringPrometheus(runtimeSnapshot)}`,
+    );
   });
 
   app.get("/openapi.json", (c) => c.json(openApiDocument));

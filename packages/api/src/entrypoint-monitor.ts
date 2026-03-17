@@ -1,11 +1,12 @@
 import { SERVO_TAIKO_ENTRY_POINT_V08 } from "@agent-paymaster/shared";
 
-const BALANCE_OF_SELECTOR = "0x70a08231";
+const DEPOSITS_SELECTOR = "0xfc7e286d";
 const DEFAULT_TAIKO_RPC_URL = "https://rpc.mainnet.taiko.xyz";
 const DEFAULT_LOW_THRESHOLD_WEI = 2_000_000_000_000_000n; // 0.002 ETH (~9 ops)
 const DEFAULT_CRITICAL_THRESHOLD_WEI = 500_000_000_000_000n; // 0.0005 ETH (~2 ops)
 const WEI_PER_ETH = 10n ** 18n;
 const MONITOR_TIMEOUT_MS = 3_000;
+const ABI_WORD_HEX_LENGTH = 64;
 
 export type DepositStatus = "ok" | "low" | "critical" | "unknown";
 
@@ -32,6 +33,27 @@ const formatEth = (wei: bigint): string => {
   return `${whole}.${fraction.toString().padStart(18, "0")}`;
 };
 
+const parseDepositBalanceWei = (rpcResult: string): bigint | null => {
+  if (!rpcResult.startsWith("0x")) {
+    return null;
+  }
+
+  const payload = rpcResult.slice(2);
+  if (payload.length === 0) {
+    return 0n;
+  }
+
+  if (payload.length <= ABI_WORD_HEX_LENGTH) {
+    return BigInt(`0x${payload}`);
+  }
+
+  if (payload.length % ABI_WORD_HEX_LENGTH !== 0) {
+    return null;
+  }
+
+  return BigInt(`0x${payload.slice(0, ABI_WORD_HEX_LENGTH)}`);
+};
+
 export class EntryPointMonitor {
   private readonly rpcUrl: string;
   private readonly paymasterAddress: string;
@@ -52,7 +74,7 @@ export class EntryPointMonitor {
   }
 
   async checkDeposit(): Promise<DepositHealth> {
-    const calldata = `${BALANCE_OF_SELECTOR}${this.paymasterAddress.slice(2).padStart(64, "0")}`;
+    const calldata = `${DEPOSITS_SELECTOR}${this.paymasterAddress.slice(2).padStart(64, "0")}`;
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -80,11 +102,15 @@ export class EntryPointMonitor {
         return { status: "unknown", error: body.error.message ?? "rpc_error" };
       }
 
-      if (typeof body.result !== "string" || !body.result.startsWith("0x")) {
+      if (typeof body.result !== "string") {
         return { status: "unknown", error: "invalid_response" };
       }
 
-      const balanceWei = BigInt(body.result);
+      const balanceWei = parseDepositBalanceWei(body.result);
+      if (balanceWei === null) {
+        return { status: "unknown", error: "invalid_response" };
+      }
+
       const status: DepositStatus =
         balanceWei <= this.criticalThresholdWei
           ? "critical"

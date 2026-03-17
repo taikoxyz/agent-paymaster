@@ -302,6 +302,77 @@ describe("BundlerService", () => {
     expect(health.status).toBe("ok");
     expect(health.chainId).toBe(167000);
     expect(health.entryPoints).toEqual([ENTRY_POINT_V08, ENTRY_POINT_V07]);
+    expect(health.mempoolDepth).toEqual({
+      pending: 0,
+      submitting: 0,
+      total: 0,
+    });
+    expect(health.operationalMetrics.userOpsAcceptedTotal).toBe(0);
+    expect(health.operationalMetrics.userOpsIncludedTotal).toBe(0);
+    expect(health.operationalMetrics.userOpsFailedTotal).toBe(0);
+    expect(health.operationalMetrics.acceptanceToInclusionSuccessRate).toBe(0);
+    expect(health.operationalMetrics.averageAcceptanceToInclusionMs).toBe(0);
+  });
+
+  it("tracks mempool age distribution and lifecycle counters", () => {
+    const pendingHash = service.sendUserOperation(
+      buildUserOperation({ nonce: "0x10" }),
+      ENTRY_POINT_V08,
+    );
+    const revertedHash = service.sendUserOperation(
+      buildUserOperation({ nonce: "0x11" }),
+      ENTRY_POINT_V08,
+    );
+    const includedHash = service.sendUserOperation(
+      buildUserOperation({ nonce: "0x12" }),
+      ENTRY_POINT_V08,
+    );
+
+    const queuedHealth = service.getHealth();
+    expect(queuedHealth.mempoolDepth).toEqual({
+      pending: 3,
+      submitting: 0,
+      total: 3,
+    });
+    expect(queuedHealth.mempoolAgeDistribution.pending.le_30000ms).toBe(3);
+
+    service.markUserOperationFailed(revertedHash, "simulation_failed");
+    service.finalizeUserOperation(includedHash, {
+      transactionHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      blockHash: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      blockNumber: 120,
+      gasUsed: "0x1000",
+      gasCost: "0x2000",
+      success: true,
+    });
+    service.finalizeUserOperation(pendingHash, {
+      transactionHash: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      blockHash: "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      blockNumber: 121,
+      gasUsed: "0x900",
+      gasCost: "0x1200",
+      success: false,
+      revertReason: "AA23 reverted",
+    });
+
+    const health = service.getHealth();
+
+    expect(health.mempoolDepth).toEqual({
+      pending: 0,
+      submitting: 0,
+      total: 0,
+    });
+    expect(health.operationalMetrics.userOpsAcceptedTotal).toBe(3);
+    expect(health.operationalMetrics.userOpsIncludedTotal).toBe(1);
+    expect(health.operationalMetrics.userOpsFailedTotal).toBe(2);
+    expect(health.operationalMetrics.acceptanceToInclusionSuccessRate).toBeCloseTo(1 / 3, 6);
+    expect(health.operationalMetrics.averageAcceptanceToInclusionMs).toBeGreaterThanOrEqual(0);
+    expect(health.operationalMetrics.simulationFailureReasons).toEqual({
+      simulation_failed: 1,
+    });
+    expect(health.operationalMetrics.revertReasons).toEqual({
+      AA23_reverted: 1,
+    });
   });
 
   it("defaults to shared supported entry points when none are configured", () => {

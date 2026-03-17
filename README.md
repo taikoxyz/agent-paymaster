@@ -91,7 +91,14 @@ POST /rpc
 | `eth_sendUserOperation`    | Submit UserOp (proxied to bundler)             |
 | `eth_supportedEntryPoints` | List supported EntryPoints                     |
 
-Other routes: `GET /health`, `GET /status`, `GET /metrics`, `GET /openapi.json`. Bundler `/health` now includes submitter status and open-operation counts.
+Other routes: `GET /health`, `GET /status`, `GET /metrics`, `GET /openapi.json`. Bundler `/health` now includes submitter status, mempool depth/age distribution, and UserOp lifecycle monitoring counters.
+
+`GET /metrics` now exports production monitoring gauges alongside API request counters, including:
+
+- submitter ETH balance (`api_bundler_submitter_balance_wei`)
+- mempool depth and age buckets (`api_bundler_mempool_depth`, `api_bundler_mempool_age_bucket`)
+- acceptance-to-inclusion and quote-to-submission ratios
+- simulation failure and revert reason distributions
 
 Static OpenAPI spec: [`docs/api-openapi.yaml`](docs/api-openapi.yaml).
 
