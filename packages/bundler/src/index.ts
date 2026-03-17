@@ -584,7 +584,11 @@ export class ViemAdmissionSimulator implements AdmissionSimulator {
         throw new Error(classified.reason);
       }
 
-      throw error;
+      // v0.7 EntryPoint does not expose simulateValidation on the production
+      // contract (it lives on EntryPointSimulations). When the revert data
+      // cannot be decoded, pass through and let the submitter catch issues
+      // during handleOps simulation.
+      return;
     }
 
     throw new Error("simulateValidation unexpectedly succeeded without revert");
