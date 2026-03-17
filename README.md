@@ -41,14 +41,14 @@ The agent holds USDC but no ETH. The entire gas payment happens in USDC through 
 
 ## Packages
 
-| Package                                | Description                                                      |
-| -------------------------------------- | ---------------------------------------------------------------- |
-| `@agent-paymaster/api`                 | Hono API — quotes, RPC gateway, rate limiting                    |
-| `@agent-paymaster/bundler`             | ERC-4337 bundler — gas estimation, mempool, automatic submission |
-| `@agent-paymaster/shared`              | Shared types and EIP-712 helpers                                 |
-| `@agent-paymaster/sdk`                 | TypeScript SDK for counterfactual account + permit + UserOp flow |
+| Package                                | Description                                                                  |
+| -------------------------------------- | ---------------------------------------------------------------------------- |
+| `@agent-paymaster/api`                 | Hono API — quotes, RPC gateway, rate limiting                                |
+| `@agent-paymaster/bundler`             | ERC-4337 bundler — gas estimation, mempool, automatic submission             |
+| `@agent-paymaster/shared`              | Shared types and EIP-712 helpers                                             |
+| `@agent-paymaster/sdk`                 | TypeScript SDK for counterfactual account + permit + UserOp flow             |
 | `@agent-paymaster/paymaster-contracts` | TaikoUsdcPaymaster + ServoAccount + ServoAccountFactory (Solidity / Foundry) |
-| `@agent-paymaster/web`                 | Next.js landing page                                             |
+| `@agent-paymaster/web`                 | Next.js landing page                                                         |
 
 ## Quick start
 
