@@ -57,7 +57,7 @@ export interface UserOperationLookupResult {
   entryPoint: string;
   transactionHash: string | null;
   blockNumber: HexString | null;
-  blockHash: string | null;
+  blockHash: HexString | null;
 }
 
 export interface UserOperationReceipt {
@@ -72,7 +72,7 @@ export interface UserOperationReceipt {
   receipt: {
     transactionHash: string;
     blockNumber: HexString;
-    blockHash: string;
+    blockHash: HexString;
     effectiveGasPrice: HexString;
     gasUsed: HexString;
     status: HexString;
@@ -140,12 +140,14 @@ interface StoredUserOperation {
   bundleHash: string | null;
   submissionTxHash: HexString | null;
   submissionStartedAt: number | null;
-  transactionHash: string | null;
+  transactionHash: HexString | null;
   blockNumber: number | null;
+  blockHash: HexString | null;
   reason: string | null;
   gasUsed: bigint | null;
   gasCost: bigint | null;
   effectiveGasPrice: bigint | null;
+  finalizedAt: number | null;
 }
 
 interface BundlerRpcErrorData {
@@ -174,6 +176,38 @@ export interface BundlerPersistence {
     submissionTxHash: HexString | null;
     submissionStartedAt: number | null;
   }>;
+  saveFinalizedOperation(operation: {
+    hash: string;
+    entryPoint: HexString;
+    userOperation: UserOperation;
+    receivedAt: number;
+    state: "included" | "failed";
+    finalizedAt: number;
+    transactionHash: HexString | null;
+    blockNumber: number | null;
+    blockHash: HexString | null;
+    reason: string | null;
+    gasUsed: bigint | null;
+    gasCost: bigint | null;
+    effectiveGasPrice: bigint | null;
+  }): void;
+  deleteFinalizedOperation(hash: string): void;
+  loadFinalizedOperations(): Array<{
+    hash: string;
+    entryPoint: HexString;
+    userOperation: UserOperation;
+    receivedAt: number;
+    state: "included" | "failed";
+    finalizedAt: number;
+    transactionHash: HexString | null;
+    blockNumber: number | null;
+    blockHash: HexString | null;
+    reason: string | null;
+    gasUsed: bigint | null;
+    gasCost: bigint | null;
+    effectiveGasPrice: bigint | null;
+  }>;
+  pruneFinalizedOperations(maxEntries: number): string[];
   saveSenderReputation(sender: string, failures: number, bannedUntil: number | null): void;
   deleteSenderReputation(sender: string): void;
   loadSenderReputations(): Array<{
@@ -199,6 +233,7 @@ interface BundlerConfigInput {
   l1DataGasScalar?: bigint;
   paymasterVerificationGasLimit?: bigint;
   paymasterPostOpGasLimit?: bigint;
+  maxFinalizedOperations?: number;
 }
 
 interface BundlerConfig {
@@ -216,6 +251,7 @@ interface BundlerConfig {
   l1DataGasScalar: bigint;
   paymasterVerificationGasLimit: bigint;
   paymasterPostOpGasLimit: bigint;
+  maxFinalizedOperations: number;
 }
 
 interface SendUserOperationParamsInput {
@@ -229,8 +265,9 @@ interface ParsedSendUserOperationParams {
 }
 
 interface BundleSubmission {
-  transactionHash: string;
+  transactionHash: HexString;
   blockNumber: number;
+  blockHash: HexString;
   gasUsed: HexString;
   gasCost: HexString;
   effectiveGasPrice?: HexString;
@@ -387,6 +424,7 @@ export class BundlerService {
       l1DataGasScalar: config.l1DataGasScalar ?? 1n,
       paymasterVerificationGasLimit: config.paymasterVerificationGasLimit ?? 120_000n,
       paymasterPostOpGasLimit: config.paymasterPostOpGasLimit ?? 80_000n,
+      maxFinalizedOperations: config.maxFinalizedOperations ?? 10_000,
     };
 
     this.persistence = persistence;
@@ -400,22 +438,39 @@ export class BundlerService {
     persistence.deleteExpiredSenderReputations();
 
     for (const entry of persistence.loadPendingOperations()) {
-      this.userOperations.set(entry.hash, {
-        hash: entry.hash,
-        userOperation: entry.userOperation,
-        entryPoint: entry.entryPoint,
-        receivedAt: entry.receivedAt,
-        state: entry.state,
-        bundleHash: null,
-        submissionTxHash: entry.submissionTxHash,
-        submissionStartedAt: entry.submissionStartedAt,
-        transactionHash: null,
-        blockNumber: null,
-        reason: null,
-        gasUsed: null,
-        gasCost: null,
-        effectiveGasPrice: null,
-      });
+      this.userOperations.set(
+        entry.hash,
+        this.createStoredOperation({
+          hash: entry.hash,
+          userOperation: entry.userOperation,
+          entryPoint: entry.entryPoint,
+          receivedAt: entry.receivedAt,
+          state: entry.state,
+          submissionTxHash: entry.submissionTxHash,
+          submissionStartedAt: entry.submissionStartedAt,
+        }),
+      );
+    }
+
+    for (const entry of persistence.loadFinalizedOperations()) {
+      this.userOperations.set(
+        entry.hash,
+        this.createStoredOperation({
+          hash: entry.hash,
+          userOperation: entry.userOperation,
+          entryPoint: entry.entryPoint,
+          receivedAt: entry.receivedAt,
+          state: entry.state,
+          transactionHash: entry.transactionHash,
+          blockNumber: entry.blockNumber,
+          blockHash: entry.blockHash,
+          reason: entry.reason,
+          gasUsed: entry.gasUsed,
+          gasCost: entry.gasCost,
+          effectiveGasPrice: entry.effectiveGasPrice,
+          finalizedAt: entry.finalizedAt,
+        }),
+      );
     }
 
     for (const reputation of persistence.loadSenderReputations()) {
@@ -424,12 +479,15 @@ export class BundlerService {
         bannedUntil: reputation.bannedUntil,
       });
     }
+
+    this.enforceFinalizedRetention();
   }
 
   getHealth() {
     const now = Date.now();
     let pending = 0;
     let submitting = 0;
+    let finalized = 0;
     let bannedSenders = 0;
 
     for (const operation of this.userOperations.values()) {
@@ -440,6 +498,11 @@ export class BundlerService {
 
       if (operation.state === "submitting") {
         submitting += 1;
+        continue;
+      }
+
+      if (operation.state === "included" || operation.state === "failed") {
+        finalized += 1;
       }
     }
 
@@ -456,6 +519,7 @@ export class BundlerService {
       acceptsUserOperations: this.config.acceptUserOperations,
       pendingUserOperations: pending,
       submittingUserOperations: submitting,
+      finalizedUserOperations: finalized,
       bannedSenders,
     };
   }
@@ -580,28 +644,25 @@ export class BundlerService {
       );
     }
 
-    if (this.userOperations.has(userOpHash)) {
+    const existingOperation = this.userOperations.get(userOpHash);
+    if (existingOperation) {
+      if (existingOperation.state === "failed") {
+        this.requeueFailedOperation(existingOperation, parsed.userOperation);
+      }
       return userOpHash;
     }
 
     const receivedAt = Date.now();
-
-    this.userOperations.set(userOpHash, {
-      hash: userOpHash,
-      userOperation: parsed.userOperation,
-      entryPoint: parsed.entryPoint,
-      receivedAt,
-      state: "pending",
-      bundleHash: null,
-      submissionTxHash: null,
-      submissionStartedAt: null,
-      transactionHash: null,
-      blockNumber: null,
-      reason: null,
-      gasUsed: null,
-      gasCost: null,
-      effectiveGasPrice: null,
-    });
+    this.userOperations.set(
+      userOpHash,
+      this.createStoredOperation({
+        hash: userOpHash,
+        userOperation: parsed.userOperation,
+        entryPoint: parsed.entryPoint,
+        receivedAt,
+        state: "pending",
+      }),
+    );
 
     this.persistence?.savePendingOperation(
       userOpHash,
@@ -620,18 +681,13 @@ export class BundlerService {
       return null;
     }
 
-    const blockHash =
-      operation.transactionHash === null || operation.blockNumber === null
-        ? null
-        : this.buildDeterministicHash(`${operation.transactionHash}:${operation.blockNumber}`);
-
     return {
       userOperation: operation.userOperation,
       entryPoint: operation.entryPoint,
       transactionHash: operation.transactionHash,
       blockNumber:
         operation.blockNumber === null ? null : bigIntToHex(BigInt(operation.blockNumber)),
-      blockHash,
+      blockHash: operation.blockHash,
     };
   }
 
@@ -644,14 +700,12 @@ export class BundlerService {
       operation.state === "pending" ||
       operation.state === "submitting" ||
       operation.transactionHash === null ||
-      operation.blockNumber === null
+      operation.blockNumber === null ||
+      operation.blockHash === null
     ) {
       return null;
     }
 
-    const blockHash = this.buildDeterministicHash(
-      `${operation.transactionHash}:${operation.blockNumber}`,
-    );
     const gasUsed = operation.gasUsed ?? 0n;
     const gasCost = operation.gasCost ?? 0n;
 
@@ -667,7 +721,7 @@ export class BundlerService {
       receipt: {
         transactionHash: operation.transactionHash,
         blockNumber: bigIntToHex(BigInt(operation.blockNumber)),
-        blockHash,
+        blockHash: operation.blockHash,
         effectiveGasPrice:
           operation.effectiveGasPrice === null
             ? operation.userOperation.maxFeePerGas
@@ -788,14 +842,18 @@ export class BundlerService {
     operation.submissionStartedAt = null;
     operation.transactionHash = submission.transactionHash;
     operation.blockNumber = submission.blockNumber;
+    operation.blockHash = submission.blockHash;
     operation.reason = submission.success
       ? null
       : (submission.reason ?? submission.revertReason ?? "execution_reverted");
     operation.gasUsed = gasUsed;
     operation.gasCost = gasCost;
     operation.effectiveGasPrice = gasPrice;
+    operation.finalizedAt = Date.now();
 
+    this.persistFinalizedOperation(operation);
     this.persistence?.removePendingOperation(userOpHash);
+    this.enforceFinalizedRetention();
   }
 
   createBundle(maxOperations = 10): BundlerBundle | null {
@@ -856,12 +914,156 @@ export class BundlerService {
     operation.submissionStartedAt = null;
     operation.transactionHash = null;
     operation.blockNumber = null;
+    operation.blockHash = null;
     operation.reason = reason;
     operation.gasUsed = null;
     operation.gasCost = null;
     operation.effectiveGasPrice = null;
+    operation.finalizedAt = Date.now();
     this.recordValidationFailure(operation.userOperation.sender);
+    this.persistFinalizedOperation(operation);
     this.persistence?.removePendingOperation(userOpHash);
+    this.enforceFinalizedRetention();
+  }
+
+  private createStoredOperation({
+    hash,
+    userOperation,
+    entryPoint,
+    receivedAt,
+    state,
+    submissionTxHash = null,
+    submissionStartedAt = null,
+    transactionHash = null,
+    blockNumber = null,
+    blockHash = null,
+    reason = null,
+    gasUsed = null,
+    gasCost = null,
+    effectiveGasPrice = null,
+    finalizedAt = null,
+  }: {
+    hash: string;
+    userOperation: UserOperation;
+    entryPoint: HexString;
+    receivedAt: number;
+    state: "pending" | "submitting" | "included" | "failed";
+    submissionTxHash?: HexString | null;
+    submissionStartedAt?: number | null;
+    transactionHash?: HexString | null;
+    blockNumber?: number | null;
+    blockHash?: HexString | null;
+    reason?: string | null;
+    gasUsed?: bigint | null;
+    gasCost?: bigint | null;
+    effectiveGasPrice?: bigint | null;
+    finalizedAt?: number | null;
+  }): StoredUserOperation {
+    return {
+      hash,
+      userOperation,
+      entryPoint,
+      receivedAt,
+      state,
+      bundleHash: null,
+      submissionTxHash,
+      submissionStartedAt,
+      transactionHash,
+      blockNumber,
+      blockHash,
+      reason,
+      gasUsed,
+      gasCost,
+      effectiveGasPrice,
+      finalizedAt,
+    };
+  }
+
+  private requeueFailedOperation(
+    operation: StoredUserOperation,
+    userOperation: UserOperation,
+  ): void {
+    const receivedAt = Date.now();
+
+    operation.userOperation = userOperation;
+    operation.receivedAt = receivedAt;
+    operation.state = "pending";
+    operation.bundleHash = null;
+    operation.submissionTxHash = null;
+    operation.submissionStartedAt = null;
+    operation.transactionHash = null;
+    operation.blockNumber = null;
+    operation.blockHash = null;
+    operation.reason = null;
+    operation.gasUsed = null;
+    operation.gasCost = null;
+    operation.effectiveGasPrice = null;
+    operation.finalizedAt = null;
+
+    this.persistence?.deleteFinalizedOperation(operation.hash);
+    this.persistence?.savePendingOperation(
+      operation.hash,
+      operation.entryPoint,
+      operation.userOperation,
+      receivedAt,
+    );
+  }
+
+  private persistFinalizedOperation(operation: StoredUserOperation): void {
+    if (!this.persistence || operation.finalizedAt === null) {
+      return;
+    }
+
+    this.persistence.saveFinalizedOperation({
+      hash: operation.hash,
+      entryPoint: operation.entryPoint,
+      userOperation: operation.userOperation,
+      receivedAt: operation.receivedAt,
+      state: operation.state === "included" ? "included" : "failed",
+      finalizedAt: operation.finalizedAt,
+      transactionHash: operation.transactionHash,
+      blockNumber: operation.blockNumber,
+      blockHash: operation.blockHash,
+      reason: operation.reason,
+      gasUsed: operation.gasUsed,
+      gasCost: operation.gasCost,
+      effectiveGasPrice: operation.effectiveGasPrice,
+    });
+  }
+
+  private enforceFinalizedRetention(): void {
+    const limit = this.config.maxFinalizedOperations;
+    if (!Number.isInteger(limit) || limit <= 0) {
+      return;
+    }
+
+    if (this.persistence) {
+      const deletedHashes = this.persistence.pruneFinalizedOperations(limit);
+      for (const hash of deletedHashes) {
+        const operation = this.userOperations.get(hash);
+        if (operation && (operation.state === "included" || operation.state === "failed")) {
+          this.userOperations.delete(hash);
+        }
+      }
+      return;
+    }
+
+    const finalized = [...this.userOperations.values()]
+      .filter(
+        (operation): operation is StoredUserOperation & { finalizedAt: number } =>
+          (operation.state === "included" || operation.state === "failed") &&
+          operation.finalizedAt !== null,
+      )
+      .sort((left, right) => left.finalizedAt - right.finalizedAt);
+
+    const pruneCount = finalized.length - limit;
+    if (pruneCount <= 0) {
+      return;
+    }
+
+    for (const operation of finalized.slice(0, pruneCount)) {
+      this.userOperations.delete(operation.hash);
+    }
   }
 
   handleJsonRpc(payload: unknown): JsonRpcResponse {
@@ -1157,12 +1359,17 @@ export class BundlerService {
       });
     }
 
-    const transactionHash = this.parseHash(submissionInput.transactionHash, "transactionHash");
+    const transactionHash = this.parseHash(
+      submissionInput.transactionHash,
+      "transactionHash",
+    ) as HexString;
+    const blockHash = this.parseHash(submissionInput.blockHash, "blockHash") as HexString;
     if (
       typeof submissionInput.blockNumber !== "number" ||
-      !Number.isInteger(submissionInput.blockNumber)
+      !Number.isInteger(submissionInput.blockNumber) ||
+      submissionInput.blockNumber < 0
     ) {
-      throw new BundlerRpcError(RPC_INVALID_PARAMS, "blockNumber must be an integer", {
+      throw new BundlerRpcError(RPC_INVALID_PARAMS, "blockNumber must be a non-negative integer", {
         reason: "block_number_invalid",
       });
     }
@@ -1170,6 +1377,7 @@ export class BundlerService {
     return {
       transactionHash,
       blockNumber: submissionInput.blockNumber,
+      blockHash,
       gasUsed: parseHexField(submissionInput.gasUsed, "gasUsed"),
       gasCost: parseHexField(submissionInput.gasCost, "gasCost"),
       effectiveGasPrice:
@@ -1320,6 +1528,10 @@ if (process.env.NODE_ENV !== "test") {
   const service = new BundlerService(
     {
       acceptUserOperations: submissionEnabled,
+      maxFinalizedOperations: parsePositiveIntegerWithFallback(
+        process.env.BUNDLER_MAX_FINALIZED_OPERATIONS,
+        10_000,
+      ),
     },
     persistence,
   );

@@ -27,6 +27,7 @@ export interface SubmissionClient {
 export interface SubmissionReceipt {
   transactionHash: HexString;
   blockNumber: bigint;
+  blockHash: HexString;
   status: "success" | "reverted";
   effectiveGasPrice?: bigint;
   logs: Array<{
@@ -144,6 +145,7 @@ export class ViemSubmissionClient implements SubmissionClient {
       return {
         transactionHash: receipt.transactionHash,
         blockNumber: receipt.blockNumber,
+        blockHash: receipt.blockHash,
         status: receipt.status,
         effectiveGasPrice: receipt.effectiveGasPrice,
         logs: receipt.logs.map((log) => ({
@@ -556,6 +558,7 @@ export class BundlerSubmitter {
         this.service.finalizeUserOperation(operation.hash, {
           transactionHash,
           blockNumber: Number(receipt.blockNumber),
+          blockHash: receipt.blockHash,
           gasUsed: "0x0",
           gasCost: "0x0",
           effectiveGasPrice,
@@ -580,6 +583,7 @@ export class BundlerSubmitter {
         this.service.finalizeUserOperation(operation.hash, {
           transactionHash,
           blockNumber: Number(receipt.blockNumber),
+          blockHash: receipt.blockHash,
           gasUsed: "0x0",
           gasCost: "0x0",
           effectiveGasPrice,
@@ -592,6 +596,7 @@ export class BundlerSubmitter {
       this.service.finalizeUserOperation(operation.hash, {
         transactionHash,
         blockNumber: Number(receipt.blockNumber),
+        blockHash: receipt.blockHash,
         gasUsed: toHex(execution.actualGasUsed),
         gasCost: toHex(execution.actualGasCost),
         effectiveGasPrice,

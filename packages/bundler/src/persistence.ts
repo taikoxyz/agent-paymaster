@@ -28,6 +28,24 @@ export class BundlerPersistenceStore {
         submission_started_at INTEGER
       );
 
+      CREATE TABLE IF NOT EXISTS finalized_user_operations (
+        hash TEXT PRIMARY KEY,
+        entry_point TEXT NOT NULL,
+        user_operation TEXT NOT NULL,
+        received_at INTEGER NOT NULL,
+        state TEXT NOT NULL,
+        finalized_at INTEGER NOT NULL,
+        transaction_hash TEXT,
+        block_number INTEGER,
+        block_hash TEXT,
+        reason TEXT,
+        gas_used TEXT,
+        gas_cost TEXT,
+        effective_gas_price TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_finalized_user_operations_finalized_at
+        ON finalized_user_operations(finalized_at);
+
       CREATE TABLE IF NOT EXISTS sender_reputations (
         sender TEXT PRIMARY KEY,
         failures INTEGER NOT NULL,
@@ -142,6 +160,166 @@ export class BundlerPersistenceStore {
       submissionTxHash: row.submission_tx_hash as HexString | null,
       submissionStartedAt: row.submission_started_at,
     }));
+  }
+
+  saveFinalizedOperation(operation: {
+    hash: string;
+    entryPoint: HexString;
+    userOperation: UserOperation;
+    receivedAt: number;
+    state: "included" | "failed";
+    finalizedAt: number;
+    transactionHash: HexString | null;
+    blockNumber: number | null;
+    blockHash: HexString | null;
+    reason: string | null;
+    gasUsed: bigint | null;
+    gasCost: bigint | null;
+    effectiveGasPrice: bigint | null;
+  }): void {
+    this.db
+      .prepare(
+        `
+          INSERT OR REPLACE INTO finalized_user_operations (
+            hash,
+            entry_point,
+            user_operation,
+            received_at,
+            state,
+            finalized_at,
+            transaction_hash,
+            block_number,
+            block_hash,
+            reason,
+            gas_used,
+            gas_cost,
+            effective_gas_price
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      )
+      .run(
+        operation.hash,
+        operation.entryPoint,
+        JSON.stringify(operation.userOperation),
+        operation.receivedAt,
+        operation.state,
+        operation.finalizedAt,
+        operation.transactionHash,
+        operation.blockNumber,
+        operation.blockHash,
+        operation.reason,
+        operation.gasUsed === null ? null : operation.gasUsed.toString(),
+        operation.gasCost === null ? null : operation.gasCost.toString(),
+        operation.effectiveGasPrice === null ? null : operation.effectiveGasPrice.toString(),
+      );
+  }
+
+  deleteFinalizedOperation(hash: string): void {
+    this.db.prepare("DELETE FROM finalized_user_operations WHERE hash = ?").run(hash);
+  }
+
+  loadFinalizedOperations(): Array<{
+    hash: string;
+    entryPoint: HexString;
+    userOperation: UserOperation;
+    receivedAt: number;
+    state: "included" | "failed";
+    finalizedAt: number;
+    transactionHash: HexString | null;
+    blockNumber: number | null;
+    blockHash: HexString | null;
+    reason: string | null;
+    gasUsed: bigint | null;
+    gasCost: bigint | null;
+    effectiveGasPrice: bigint | null;
+  }> {
+    const rows = this.db
+      .prepare(
+        `
+          SELECT
+            hash,
+            entry_point,
+            user_operation,
+            received_at,
+            state,
+            finalized_at,
+            transaction_hash,
+            block_number,
+            block_hash,
+            reason,
+            gas_used,
+            gas_cost,
+            effective_gas_price
+          FROM finalized_user_operations
+          ORDER BY finalized_at DESC
+        `,
+      )
+      .all() as Array<{
+      hash: string;
+      entry_point: string;
+      user_operation: string;
+      received_at: number;
+      state: string;
+      finalized_at: number;
+      transaction_hash: string | null;
+      block_number: number | null;
+      block_hash: string | null;
+      reason: string | null;
+      gas_used: string | null;
+      gas_cost: string | null;
+      effective_gas_price: string | null;
+    }>;
+
+    return rows
+      .filter((row) => row.state === "included" || row.state === "failed")
+      .map((row) => ({
+        hash: row.hash,
+        entryPoint: row.entry_point as HexString,
+        userOperation: JSON.parse(row.user_operation) as UserOperation,
+        receivedAt: row.received_at,
+        state: row.state as "included" | "failed",
+        finalizedAt: row.finalized_at,
+        transactionHash: row.transaction_hash as HexString | null,
+        blockNumber: row.block_number,
+        blockHash: row.block_hash as HexString | null,
+        reason: row.reason,
+        gasUsed: row.gas_used === null ? null : BigInt(row.gas_used),
+        gasCost: row.gas_cost === null ? null : BigInt(row.gas_cost),
+        effectiveGasPrice:
+          row.effective_gas_price === null ? null : BigInt(row.effective_gas_price),
+      }));
+  }
+
+  pruneFinalizedOperations(maxEntries: number): string[] {
+    if (!Number.isInteger(maxEntries) || maxEntries <= 0) {
+      return [];
+    }
+
+    const hashesToDelete = this.db
+      .prepare(
+        `
+          SELECT hash
+          FROM finalized_user_operations
+          ORDER BY finalized_at DESC
+          LIMIT -1 OFFSET ?
+        `,
+      )
+      .all(maxEntries) as Array<{ hash: string }>;
+
+    if (hashesToDelete.length === 0) {
+      return [];
+    }
+
+    const deleteStatement = this.db.prepare("DELETE FROM finalized_user_operations WHERE hash = ?");
+    const deleteBatch = this.db.transaction((hashes: string[]) => {
+      for (const hash of hashes) {
+        deleteStatement.run(hash);
+      }
+    });
+
+    const deletedHashes = hashesToDelete.map((row) => row.hash);
+    deleteBatch(deletedHashes);
+    return deletedHashes;
   }
 
   saveSenderReputation(sender: string, failures: number, bannedUntil: number | null): void {

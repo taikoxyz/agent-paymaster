@@ -33,7 +33,7 @@ The agent holds USDC but no ETH. The entire gas payment happens in USDC through 
 
 **2. Quote** — The agent signs an [EIP-2612 USDC permit](https://eips.ethereum.org/EIPS/eip-2612) for the quoted amount and calls `pm_getPaymasterData` with the permit attached. The API returns EIP-712 signed paymaster fields that the agent attaches to the UserOperation.
 
-**3. Submission** — The agent signs the final UserOperation and submits it via `eth_sendUserOperation`. The bundler validates it, stores it in the mempool, and a background submitter loop simulates and forwards it to `handleOps` on-chain. The bundler pays ETH gas upfront.
+**3. Submission** — The agent signs the final UserOperation and submits it via `eth_sendUserOperation`. The bundler validates it, stores it in the mempool, and a background submitter loop simulates and forwards it to `handleOps` on-chain. Finalized operation metadata is persisted so `eth_getUserOperationByHash` / `eth_getUserOperationReceipt` survive restarts, and exact-hash retries are requeued after failed attempts. The bundler pays ETH gas upfront.
 
 **4. On-chain settlement** — The EntryPoint calls the paymaster contract, which verifies the quote signature, executes the USDC permit, and locks `maxTokenCost` USDC from the agent. After the agent's transaction executes, the contract settles the actual gas cost in USDC and refunds any surplus back to the agent.
 
@@ -72,6 +72,7 @@ Optional submission tuning:
 - `BUNDLER_MAX_INFLIGHT_TRANSACTIONS` defaults to `1` to keep nonce management simple and predictable.
 - `BUNDLER_BUNDLE_POLL_INTERVAL_MS` defaults to `5000`.
 - `BUNDLER_TX_TIMEOUT_MS` defaults to `180000`.
+- `BUNDLER_MAX_FINALIZED_OPERATIONS` defaults to `10000` and bounds retained finalized UserOp records.
 
 ## API
 
