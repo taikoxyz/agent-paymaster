@@ -124,6 +124,7 @@ export class ViemSubmissionClient implements SubmissionClient {
       abi: ENTRY_POINT_ABI,
       functionName: "handleOps",
       args: [operations, beneficiary],
+      gas: 2_000_000n,
     });
   }
 
