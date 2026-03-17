@@ -444,14 +444,15 @@ describe("BundlerService", () => {
     expect(estimate.paymasterPostOpGasLimit).toBe("0x13880");
   });
 
-  it("charges initCode byte cost against verification gas, not call gas", async () => {
+  it("applies initCode deploy gas floor to verification gas", async () => {
     const estimate = await service.estimateUserOperationGas(
       buildUserOperation({ initCode: "0x1234" }),
       ENTRY_POINT_V07,
     );
 
     expect(estimate.callGasLimit).toBe("0xd6f8");
-    expect(estimate.verificationGasLimit).toBe("0x1d4d8");
+    // 120000 + (2*4) + (2*8) + 500000 (deploy floor) = 620024 = 0x975f8
+    expect(estimate.verificationGasLimit).toBe("0x975f8");
   });
 
   it("uses simulation preOpGas to raise verification gas for deployed accounts", async () => {
@@ -469,11 +470,12 @@ describe("BundlerService", () => {
     expect(estimate.verificationGasLimit).toBe("0x441d0");
   });
 
-  it("uses simulation preOpGas to raise verification gas for initCode accounts", async () => {
+  it("uses simulation preOpGas to raise verification gas above initCode floor", async () => {
+    // Simulation must exceed the deploy floor (620040) + preVerificationGas (21008)
     const serviceWithSimulation = new BundlerService({
       chainId: 167000,
       entryPoints: [ENTRY_POINT_V07],
-      gasSimulator: new FakeGasSimulator(450_000n),
+      gasSimulator: new FakeGasSimulator(750_000n),
     });
 
     const estimate = await serviceWithSimulation.estimateUserOperationGas(
@@ -481,7 +483,8 @@ describe("BundlerService", () => {
       ENTRY_POINT_V07,
     );
 
-    expect(estimate.verificationGasLimit).toBe("0x68bc0");
+    // simulatedVerificationGas = 750000 - 21008 = 728992 > 620040 (floor)
+    expect(estimate.verificationGasLimit).toBe("0xb1fa0");
   });
 
   it("falls back to heuristic estimates when simulation fails", async () => {
@@ -497,7 +500,8 @@ describe("BundlerService", () => {
     );
 
     expect(estimate.callGasLimit).toBe("0xd6f8");
-    expect(estimate.verificationGasLimit).toBe("0x1d4d8");
+    // Falls back to heuristic with deploy floor: 120024 + 500000 = 620024 = 0x975f8
+    expect(estimate.verificationGasLimit).toBe("0x975f8");
     expect(estimate.preVerificationGas).toBe("0x5210");
   });
 

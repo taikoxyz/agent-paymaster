@@ -282,6 +282,7 @@ interface BundlerConfigInput {
   banWindowMs?: number;
   baseCallGas?: bigint;
   baseVerificationGas?: bigint;
+  initCodeDeployGas?: bigint;
   basePreVerificationGas?: bigint;
   perByteCallDataGas?: bigint;
   perByteVerificationGas?: bigint;
@@ -305,6 +306,7 @@ interface BundlerConfig {
   banWindowMs: number;
   baseCallGas: bigint;
   baseVerificationGas: bigint;
+  initCodeDeployGas: bigint;
   basePreVerificationGas: bigint;
   perByteCallDataGas: bigint;
   perByteVerificationGas: bigint;
@@ -627,6 +629,7 @@ export class BundlerService {
       banWindowMs: config.banWindowMs ?? 2 * 60 * 1000,
       baseCallGas: config.baseCallGas ?? 55_000n,
       baseVerificationGas: config.baseVerificationGas ?? 120_000n,
+      initCodeDeployGas: config.initCodeDeployGas ?? 500_000n,
       basePreVerificationGas: config.basePreVerificationGas ?? 21_000n,
       perByteCallDataGas: config.perByteCallDataGas ?? 16n,
       perByteVerificationGas: config.perByteVerificationGas ?? 4n,
@@ -833,12 +836,22 @@ export class BundlerService {
         ? hexToBigInt(userOperation.callGasLimit)
         : this.config.baseCallGas + callDataBytes * this.config.perByteCallDataGas;
 
+    const heuristicVerificationGas =
+      this.config.baseVerificationGas +
+      callDataBytes * this.config.perByteVerificationGas +
+      initCodeBytes * 8n;
+
+    // When initCode is present, factory deployment (CREATE2 + constructor)
+    // dominates verification gas. Apply a floor to avoid OOG during deployment.
+    const verificationFloor =
+      initCodeBytes > 0n
+        ? heuristicVerificationGas + this.config.initCodeDeployGas
+        : heuristicVerificationGas;
+
     let verificationGasLimit =
       userOperation.verificationGasLimit !== undefined
         ? hexToBigInt(userOperation.verificationGasLimit)
-        : this.config.baseVerificationGas +
-          callDataBytes * this.config.perByteVerificationGas +
-          initCodeBytes * 8n;
+        : verificationFloor;
 
     const taikoDataGas =
       userOperation.l1DataGas === undefined ? 0n : hexToBigInt(userOperation.l1DataGas);
