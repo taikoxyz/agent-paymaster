@@ -4,7 +4,7 @@ An ERC-4337 paymaster and bundler that lets AI agents and dApps pay for gas in U
 
 Traditional ERC-4337 paymasters require upfront registration, API keys, or manual deposit flows. Servo removes all of that. Any smart account with USDC can submit transactions immediately — the paymaster prices gas in real time via a composite oracle (Chainlink + Coinbase + Kraken) and settles costs atomically on-chain. The agent signs a standard [EIP-2612 permit](https://eips.ethereum.org/EIPS/eip-2612), the paymaster verifies an EIP-712 quote, and settlement happens in a single UserOperation.
 
-[Landing page](https://web-ggonzalez94s-projects.vercel.app) · [API status](https://api-production-cdfe.up.railway.app/status) · [OpenAPI spec](docs/api-openapi.yaml)
+[Landing page](https://web-ggonzalez94s-projects.vercel.app) · [API status](https://api-production-cdfe.up.railway.app/status) · [OpenAPI spec](docs/api-openapi.yaml) · [Deployment reference](docs/deployment.md)
 
 ## Use it with your agent
 
@@ -14,14 +14,24 @@ Point your agent at the production RPC endpoint and let it transact with USDC on
 POST https://api-production-cdfe.up.railway.app/rpc
 ```
 
+Key addresses on Taiko Alethia (chain 167000):
+
+| Contract            | Address                                      |
+| ------------------- | -------------------------------------------- |
+| ServoAccountFactory | `0xCa245Ae9B786EF420Dc359430e5833b840880619` |
+| EntryPoint v0.7     | `0x0000000071727De22E5E9d8BAf0edAc6f37da032` |
+| USDC                | `0x07d83526730c7438048D55A4fc0b850e2aaB6f0b` |
+
+See [docs/deployment.md](docs/deployment.md) for the full deployment reference (all contracts, accounts, infrastructure).
+
 The flow for an agent is:
 
-1. Create an ERC-4337 smart wallet (e.g. [SimpleAccount](https://github.com/eth-infinitism/account-abstraction))
-2. Fund it with USDC on Taiko
-3. Build a UserOperation and call `pm_getPaymasterStubData` to get a gas estimate
+1. Derive a counterfactual wallet address from the ServoAccountFactory (`getAddress(owner, salt)`)
+2. Fund it with USDC on Taiko (the wallet doesn't need to be deployed yet)
+3. Build a UserOperation with `initCode` pointing to the factory and call `pm_getPaymasterStubData` to get a gas estimate
 4. Sign a USDC permit for the quoted cost
 5. Call `pm_getPaymasterData` with the permit to get signed paymaster fields
-6. Submit via `eth_sendUserOperation` — done, no ETH ever touched
+6. Submit via `eth_sendUserOperation` — the account is deployed and the transaction executes in one step, no ETH ever touched
 
 All methods go through the single `/rpc` endpoint using standard [ERC-7677](https://eips.ethereum.org/EIPS/eip-7677) JSON-RPC.
 

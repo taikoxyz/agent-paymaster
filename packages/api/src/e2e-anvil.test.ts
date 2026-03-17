@@ -197,7 +197,9 @@ describe.runIf(runE2E)("E2E: Anvil cold-start", () => {
     }
     try {
       unlinkSync(FIXTURE_PATH);
-    } catch { /* cleanup — file may not exist */ }
+    } catch {
+      /* cleanup — file may not exist */
+    }
   });
 
   it("deploys ServoAccount and transfers USDC with zero ETH", async () => {
