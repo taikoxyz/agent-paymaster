@@ -618,8 +618,7 @@ export class BundlerService {
         DEFAULT_SUPPORTED_ENTRY_POINTS,
       acceptUserOperations: config.acceptUserOperations ?? true,
       reputationBanFailures: config.reputationBanFailures ?? REPUTATION_BAN_FAILURES,
-      reputationThrottleFailures:
-        config.reputationThrottleFailures ?? REPUTATION_THROTTLE_FAILURES,
+      reputationThrottleFailures: config.reputationThrottleFailures ?? REPUTATION_THROTTLE_FAILURES,
       reputationWindowMs: config.reputationWindowMs ?? DEFAULT_REPUTATION_WINDOW_MS,
       throttleWindowMs: config.throttleWindowMs ?? DEFAULT_THROTTLE_WINDOW_MS,
       banWindowMs: config.banWindowMs ?? 2 * 60 * 1000,
