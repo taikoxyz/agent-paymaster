@@ -10,6 +10,12 @@ Format:
 
 ## [Unreleased]
 
+## [v0.2.6] - 2026-03-22
+
+### Added
+
+- Agent skill (`skills/servo-agent/`) teaching AI agents how to create ERC-4337 accounts and transact on Taiko paying gas in USDC via Servo, using standard viem tooling and JSON-RPC.
+
 ## [v0.2.5] - 2026-03-17
 
 ### Fixed
