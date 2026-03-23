@@ -113,9 +113,7 @@ export class RpcGasPriceOracle implements GasPriceOracle {
    *   the *next* block's predicted base fee)
    * - medianTip: median of the 50th-percentile reward values across sampled blocks
    */
-  private parseFeeHistory(
-    result: unknown,
-  ): { baseFee: bigint; medianTip: bigint } | null {
+  private parseFeeHistory(result: unknown): { baseFee: bigint; medianTip: bigint } | null {
     if (result === null || typeof result !== "object") {
       return null;
     }
