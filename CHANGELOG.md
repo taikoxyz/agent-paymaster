@@ -10,6 +10,12 @@ Format:
 
 ## [Unreleased]
 
+## [v0.2.9] - 2026-03-23
+
+### Fixed
+
+- Gas price oracle was not wired through to the PaymasterService config, causing `gasPriceGuidance` to always be omitted from responses. The oracle is now correctly passed to the internal config.
+
 ## [v0.2.8] - 2026-03-23
 
 ### Added

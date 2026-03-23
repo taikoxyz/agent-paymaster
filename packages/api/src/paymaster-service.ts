@@ -545,6 +545,7 @@ export class PaymasterService {
         OPERATIONAL_DEFAULTS.defaultPaymasterPostOpGasLimit,
       tokenAddresses: normalizedTokenAddresses,
       priceProvider: config.priceProvider,
+      gasPriceOracle: config.gasPriceOracle,
     };
 
     this.quoteSigner = privateKeyToAccount(this.config.quoteSignerPrivateKey);
