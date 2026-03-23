@@ -3,10 +3,16 @@ import type { GasPriceGuidance, GasPriceOracle } from "./paymaster-service.js";
 const DEFAULT_TAIKO_RPC_URL = "https://rpc.mainnet.taiko.xyz";
 const DEFAULT_CACHE_TTL_MS = 10_000;
 const DEFAULT_TIMEOUT_MS = 2_000;
-/** Minimum tip to ensure transactions are picked up (0.001 gwei). */
+/**
+ * Minimum tip to ensure transactions are picked up (0.001 gwei).
+ * Taiko's actual median tip is 0 gwei (network is near-empty), but we
+ * set a small floor so the suggested fee is never literally zero.
+ */
 const MIN_PRIORITY_FEE_WEI = 1_000_000n;
-/** Default tip when eth_maxPriorityFeePerGas is unavailable (0.01 gwei). */
-const DEFAULT_PRIORITY_FEE_WEI = 10_000_000n;
+/** Number of recent blocks to sample for fee history. */
+const FEE_HISTORY_BLOCK_COUNT = 10;
+/** Percentile of recent priority fees to use (50th = median). */
+const FEE_HISTORY_PERCENTILE = 50;
 
 interface RpcGasPriceOracleConfig {
   rpcUrl?: string;
@@ -18,10 +24,14 @@ interface RpcGasPriceOracleConfig {
 /**
  * Fetches gas price data from a chain RPC and caches it briefly.
  *
+ * Uses `eth_feeHistory` instead of `eth_maxPriorityFeePerGas` because
+ * the latter returns a wildly inflated value on low-traffic L2s like
+ * Taiko (e.g. 0.675 gwei when actual median tip is 0).
+ *
  * Returns a `GasPriceGuidance` with:
  * - `baseFeePerGas`: current block base fee
- * - `suggestedMaxFeePerGas`: 2 × baseFee + priorityFee (safe buffer for 2 blocks)
- * - `suggestedMaxPriorityFeePerGas`: tip from eth_maxPriorityFeePerGas or default
+ * - `suggestedMaxFeePerGas`: 2 × baseFee + median tip (safe for 2 blocks)
+ * - `suggestedMaxPriorityFeePerGas`: median tip from recent blocks
  */
 export class RpcGasPriceOracle implements GasPriceOracle {
   private readonly rpcUrl: string;
@@ -48,24 +58,23 @@ export class RpcGasPriceOracle implements GasPriceOracle {
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
     try {
-      const [baseFeeResult, priorityFeeResult] = await Promise.allSettled([
-        this.rpcCall("eth_getBlockByNumber", ["latest", false], controller.signal),
-        this.rpcCall("eth_maxPriorityFeePerGas", [], controller.signal),
-      ]);
+      const feeHistory = await this.rpcCall(
+        "eth_feeHistory",
+        [`0x${FEE_HISTORY_BLOCK_COUNT.toString(16)}`, "latest", [FEE_HISTORY_PERCENTILE]],
+        controller.signal,
+      );
 
-      const baseFeeHex = this.extractBaseFee(baseFeeResult);
-      if (baseFeeHex === null) {
+      const parsed = this.parseFeeHistory(feeHistory);
+      if (parsed === null) {
         return null;
       }
 
-      const baseFee = BigInt(baseFeeHex);
-      const priorityFee = this.extractPriorityFee(priorityFeeResult);
-      const suggestedMaxFee = baseFee * 2n + priorityFee;
+      const suggestedMaxFee = parsed.baseFee * 2n + parsed.medianTip;
 
       const guidance: GasPriceGuidance = {
-        baseFeePerGas: toHex(baseFee),
+        baseFeePerGas: toHex(parsed.baseFee),
         suggestedMaxFeePerGas: toHex(suggestedMaxFee),
-        suggestedMaxPriorityFeePerGas: toHex(priorityFee),
+        suggestedMaxPriorityFeePerGas: toHex(parsed.medianTip),
         fetchedAt: new Date().toISOString(),
       };
 
@@ -98,32 +107,62 @@ export class RpcGasPriceOracle implements GasPriceOracle {
     return body.result;
   }
 
-  private extractBaseFee(result: PromiseSettledResult<unknown>): string | null {
-    if (result.status !== "fulfilled") {
+  /**
+   * Parses `eth_feeHistory` response to extract:
+   * - baseFee: the most recent block's base fee (last element, which is
+   *   the *next* block's predicted base fee)
+   * - medianTip: median of the 50th-percentile reward values across sampled blocks
+   */
+  private parseFeeHistory(
+    result: unknown,
+  ): { baseFee: bigint; medianTip: bigint } | null {
+    if (result === null || typeof result !== "object") {
       return null;
     }
 
-    const block = result.value as Record<string, unknown> | null;
-    if (block === null || typeof block !== "object") {
+    const history = result as {
+      baseFeePerGas?: string[];
+      reward?: string[][];
+    };
+
+    const baseFees = history.baseFeePerGas;
+    if (!Array.isArray(baseFees) || baseFees.length === 0) {
       return null;
     }
 
-    const baseFee = block.baseFeePerGas;
-    return typeof baseFee === "string" && baseFee.startsWith("0x") ? baseFee : null;
-  }
-
-  private extractPriorityFee(result: PromiseSettledResult<unknown>): bigint {
-    if (result.status !== "fulfilled") {
-      return DEFAULT_PRIORITY_FEE_WEI;
+    // baseFeePerGas has N+1 entries; the last is the predicted next-block base fee
+    const latestBaseFeeHex = baseFees[baseFees.length - 1];
+    if (typeof latestBaseFeeHex !== "string" || !latestBaseFeeHex.startsWith("0x")) {
+      return null;
     }
 
-    const value = result.value;
-    if (typeof value !== "string" || !value.startsWith("0x")) {
-      return DEFAULT_PRIORITY_FEE_WEI;
+    const baseFee = BigInt(latestBaseFeeHex);
+
+    // Extract the median (50th percentile) tip from each block, then take the
+    // median of those medians for a stable estimate.
+    const rewards = history.reward;
+    let medianTip = MIN_PRIORITY_FEE_WEI;
+
+    if (Array.isArray(rewards) && rewards.length > 0) {
+      const tips: bigint[] = [];
+      for (const blockRewards of rewards) {
+        if (Array.isArray(blockRewards) && blockRewards.length > 0) {
+          const tipHex = blockRewards[0]; // 50th percentile (only percentile requested)
+          if (typeof tipHex === "string" && tipHex.startsWith("0x")) {
+            tips.push(BigInt(tipHex));
+          }
+        }
+      }
+
+      if (tips.length > 0) {
+        tips.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+        const mid = Math.floor(tips.length / 2);
+        const rawMedian = tips.length % 2 === 0 ? (tips[mid - 1] + tips[mid]) / 2n : tips[mid];
+        medianTip = rawMedian > MIN_PRIORITY_FEE_WEI ? rawMedian : MIN_PRIORITY_FEE_WEI;
+      }
     }
 
-    const parsed = BigInt(value);
-    return parsed > MIN_PRIORITY_FEE_WEI ? parsed : MIN_PRIORITY_FEE_WEI;
+    return { baseFee, medianTip };
   }
 }
 

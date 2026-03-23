@@ -10,6 +10,12 @@ Format:
 
 ## [Unreleased]
 
+## [v0.2.10] - 2026-03-23
+
+### Fixed
+
+- Gas price oracle now uses `eth_feeHistory` (median of 50th-percentile tips over 10 blocks) instead of `eth_maxPriorityFeePerGas`, which returned 0.675 gwei on Taiko when the actual median tip is 0. This was inflating suggested gas prices by ~75× and USDC quotes by ~15×. With the fix, a cold-start account deployment quote drops from ~1.5 USDC to ~0.05 USDC.
+
 ## [v0.2.9] - 2026-03-23
 
 ### Fixed
