@@ -39,7 +39,7 @@ All methods go through the single `/rpc` endpoint using standard [ERC-7677](http
 
 The agent holds USDC but no ETH. The entire gas payment happens in USDC through four phases:
 
-**1. Estimate** — The agent calls `pm_getPaymasterStubData` with a draft UserOperation. The API estimates gas via the bundler, and the bundler combines heuristic sizing with EntryPoint `simulateValidation` pre-op gas (against the configured Taiko RPC + EntryPoint). The API then converts the ETH cost to USDC using a composite price oracle (Chainlink primary, Coinbase + Kraken fallback), applies a surcharge (default 5%), and returns a USDC cost estimate.
+**1. Estimate** — The agent calls `pm_getPaymasterStubData` with a draft UserOperation. The API estimates gas via the bundler, and the bundler combines `eth_estimateGas` call simulation with EntryPoint `simulateValidation` pre-op gas (against the configured Taiko RPC + EntryPoint). If call simulation is unavailable, it falls back to a padded heuristic estimate. The API then converts the ETH cost to USDC using a composite price oracle (Chainlink primary, Coinbase + Kraken fallback), applies a surcharge (default 5%), and returns a USDC cost estimate.
 
 **2. Quote** — The agent signs an [EIP-2612 USDC permit](https://eips.ethereum.org/EIPS/eip-2612) for the quoted amount and calls `pm_getPaymasterData` with the permit attached. The API returns EIP-712 signed paymaster fields that the agent attaches to the UserOperation.
 
@@ -76,10 +76,12 @@ pnpm dev
 
 For write-capable bundler behavior, set `BUNDLER_SUBMITTER_PRIVATE_KEY`. If it is unset, the bundler starts in read-only mode and rejects `eth_sendUserOperation` instead of silently queueing UserOps it cannot submit.
 
-Optional submission tuning:
+Optional bundler tuning:
 
 - `BUNDLER_CHAIN_ID` selects the target Taiko chain for bundler hashing + viem chain context (default `167000`).
-- `BUNDLER_CHAIN_RPC_URL` overrides the Taiko RPC used for both `simulateValidation` gas estimation and `handleOps` submission.
+- `BUNDLER_CHAIN_RPC_URL` overrides the Taiko RPC used for `eth_estimateGas`, `simulateValidation`, and `handleOps` submission.
+- `BUNDLER_BENEFICIARY_ADDRESS` overrides the fee recipient; by default the bundler uses the submitter address.
+- `BUNDLER_CALL_GAS_BUFFER_PERCENT` adds extra headroom to simulated `callGasLimit` values (default `15`).
 - `BUNDLER_MAX_OPERATIONS_PER_BUNDLE` defaults to `1` for conservative single-op bundles.
 - `BUNDLER_MAX_INFLIGHT_TRANSACTIONS` defaults to `1` to keep nonce management simple and predictable.
 - `BUNDLER_BUNDLE_POLL_INTERVAL_MS` defaults to `5000`.
@@ -182,7 +184,7 @@ git tag vX.Y.Z
 git push origin main --follow-tags
 ```
 
-The workflow validates versions, re-runs CI, deploys API + bundler to Railway, deploys web to Vercel, smoke tests everything, and publishes the GitHub Release.
+The workflow validates versions, re-runs CI, deploys the bundler and API to Railway, smoke tests the live API/quote flow, and publishes the GitHub Release. Vercel web deploy is currently commented out pending token refresh.
 
 Release helpers:
 
@@ -195,8 +197,8 @@ SMOKE_API_BASE_URL=https://api.example.com pnpm smoke:deploy
 <details>
 <summary>Required GitHub Actions configuration</summary>
 
-**Variables**: `RAILWAY_PROJECT_ID`, `RAILWAY_ENVIRONMENT_ID`, `RAILWAY_API_SERVICE_ID`, `RAILWAY_BUNDLER_SERVICE_ID`, `RAILWAY_API_BASE_URL`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`, `VERCEL_PRODUCTION_URL`
+**Variables**: `RAILWAY_PROJECT_ID`, `RAILWAY_ENVIRONMENT_ID`, `RAILWAY_API_SERVICE_ID`, `RAILWAY_BUNDLER_SERVICE_ID`, `RAILWAY_API_BASE_URL`
 
-**Secrets**: `RAILWAY_API_TOKEN`, `VERCEL_TOKEN`
+**Secrets**: `RAILWAY_API_TOKEN`
 
 </details>

@@ -87,11 +87,12 @@ For live `eth_sendUserOperation` support, the bundler also needs:
 
 - `BUNDLER_SUBMITTER_PRIVATE_KEY` — funded Taiko EOA used to submit `handleOps`
 
-Optional bundler submission tuning:
+Optional bundler tuning:
 
 - `BUNDLER_CHAIN_ID` — target chain id for bundler hashing + viem chain context (default `167000`)
-- `BUNDLER_CHAIN_RPC_URL` — Taiko RPC used for EntryPoint `simulateValidation` gas estimation and `handleOps` submission (defaults to `TAIKO_RPC_URL`, then `TAIKO_MAINNET_RPC_URL`, then public Taiko RPC)
+- `BUNDLER_CHAIN_RPC_URL` — Taiko RPC used for `eth_estimateGas`, EntryPoint `simulateValidation`, and `handleOps` submission (defaults to `TAIKO_RPC_URL`, then `TAIKO_MAINNET_RPC_URL`, then public Taiko RPC)
 - `BUNDLER_BENEFICIARY_ADDRESS` — alternate fee recipient; defaults to the submitter address
+- `BUNDLER_CALL_GAS_BUFFER_PERCENT` — extra percent buffer added on top of simulated `callGasLimit`, default `15`
 - `BUNDLER_BUNDLE_POLL_INTERVAL_MS` — submission loop interval
 - `BUNDLER_MAX_OPERATIONS_PER_BUNDLE` — max claimed UserOps per bundle, default `1`
 - `BUNDLER_MAX_INFLIGHT_TRANSACTIONS` — max unconfirmed submitter txs, default `1`
@@ -113,7 +114,7 @@ Contract deployment env vars/scripts:
 - **Package manager**: pnpm 10.32.1 (workspaces)
 - **Tests**: Vitest (TS), Forge (Solidity)
 - **CI**: GitHub Actions — lint, format, build, test (TS + Solidity)
-- **Release**: semver tag push (`vX.Y.Z`) deploys Railway + Vercel, runs live smoke tests, then publishes the GitHub Release from `CHANGELOG.md`
+- **Release**: semver tag push (`vX.Y.Z`) deploys Railway services, runs live smoke tests, then publishes the GitHub Release from `CHANGELOG.md` (web deploy currently commented out)
 
 ## Releases & Deployment
 
@@ -178,6 +179,7 @@ Railway config: `railway.api.json` and `railway.bundler.json` are the in-repo se
 | `RATE_LIMIT_WINDOW_MS`              | 60000   | Rate limit window (1 min)                 |
 | `REQUEST_TIMEOUT_MS`                | 2500    | Upstream request timeout                  |
 | `BUNDLER_CHAIN_ID`                  | 167000  | Bundler chain id + viem chain context     |
+| `BUNDLER_CALL_GAS_BUFFER_PERCENT`   | 15      | Extra buffer on simulated `callGasLimit`  |
 | `BUNDLER_MAX_OPERATIONS_PER_BUNDLE` | 1       | Safe default bundle size                  |
 | `BUNDLER_MAX_INFLIGHT_TRANSACTIONS` | 1       | Max submitter txs awaiting confirmation   |
 | `BUNDLER_BUNDLE_POLL_INTERVAL_MS`   | 5000    | Submission loop cadence                   |

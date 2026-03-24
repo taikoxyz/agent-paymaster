@@ -10,6 +10,16 @@ Format:
 
 ## [Unreleased]
 
+## [v0.2.11] - 2026-03-24
+
+### Changed
+
+- Bundler `callGasLimit` estimation now uses `eth_estimateGas` simulation when possible and applies a configurable `BUNDLER_CALL_GAS_BUFFER_PERCENT` safety margin (default `15`), instead of relying on the calldata-size heuristic alone.
+
+### Fixed
+
+- Complex UserOps such as ERC-8004 registrations no longer get 3x+ underestimated `callGasLimit` values during quoting and submission. If the sender is undeployed or RPC simulation fails, the bundler now falls back to heuristic `callGasLimit × 3`.
+
 ## [v0.2.10] - 2026-03-23
 
 ### Fixed
