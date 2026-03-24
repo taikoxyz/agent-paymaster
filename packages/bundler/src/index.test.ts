@@ -5,6 +5,7 @@ import { packPaymasterAndData, SERVO_SUPPORTED_ENTRY_POINTS } from "@agent-payma
 import {
   type AdmissionSimulator,
   BundlerService,
+  type CallGasEstimator,
   createBundlerApp,
   type BundlerPersistence,
   type HexString,
@@ -59,6 +60,34 @@ class ThrowingGasSimulator implements GasSimulator {
   estimatePreOpGas(..._args: Parameters<GasSimulator["estimatePreOpGas"]>): Promise<bigint> {
     void _args;
     throw new Error("simulateValidation unavailable");
+  }
+}
+
+class FakeCallGasEstimator implements CallGasEstimator {
+  constructor(private readonly result: bigint | null) {}
+
+  estimateCallGas(
+    _sender: `0x${string}`,
+    _callData: `0x${string}`,
+    _entryPoint: `0x${string}`,
+  ): Promise<bigint | null> {
+    void _sender;
+    void _callData;
+    void _entryPoint;
+    return Promise.resolve(this.result);
+  }
+}
+
+class ThrowingCallGasEstimator implements CallGasEstimator {
+  estimateCallGas(
+    _sender: `0x${string}`,
+    _callData: `0x${string}`,
+    _entryPoint: `0x${string}`,
+  ): Promise<bigint | null> {
+    void _sender;
+    void _callData;
+    void _entryPoint;
+    throw new Error("eth_estimateGas unavailable");
   }
 }
 
@@ -570,6 +599,87 @@ describe("BundlerService", () => {
         ENTRY_POINT_V07,
       ),
     ).rejects.toThrow("Provide either initCode or factory/factoryData, not both");
+  });
+
+  it("uses call gas estimator when available", async () => {
+    const serviceWithCallGas = new BundlerService({
+      chainId: 167000,
+      entryPoints: [ENTRY_POINT_V07],
+      callGasEstimator: new FakeCallGasEstimator(200_000n),
+    });
+
+    const estimate = await serviceWithCallGas.estimateUserOperationGas(
+      buildUserOperation(),
+      ENTRY_POINT_V07,
+    );
+
+    // 200000 = 0x30d40
+    expect(estimate.callGasLimit).toBe("0x30d40");
+  });
+
+  it("scales heuristic when call gas estimator returns null", async () => {
+    const serviceWithNullEstimator = new BundlerService({
+      chainId: 167000,
+      entryPoints: [ENTRY_POINT_V07],
+      callGasEstimator: new FakeCallGasEstimator(null),
+    });
+
+    const estimate = await serviceWithNullEstimator.estimateUserOperationGas(
+      buildUserOperation(),
+      ENTRY_POINT_V07,
+    );
+
+    // Heuristic: 55000 + 2*16 = 55032. Multiplied by 3: 165096 = 0x284e8
+    expect(estimate.callGasLimit).toBe("0x284e8");
+  });
+
+  it("scales heuristic when call gas estimator throws", async () => {
+    const serviceWithThrowingEstimator = new BundlerService({
+      chainId: 167000,
+      entryPoints: [ENTRY_POINT_V07],
+      callGasEstimator: new ThrowingCallGasEstimator(),
+    });
+
+    const estimate = await serviceWithThrowingEstimator.estimateUserOperationGas(
+      buildUserOperation(),
+      ENTRY_POINT_V07,
+    );
+
+    // Same as null case — heuristic × 3
+    expect(estimate.callGasLimit).toBe("0x284e8");
+  });
+
+  it("respects client-provided callGasLimit even with call gas estimator", async () => {
+    const serviceWithCallGas = new BundlerService({
+      chainId: 167000,
+      entryPoints: [ENTRY_POINT_V07],
+      callGasEstimator: new FakeCallGasEstimator(200_000n),
+    });
+
+    const estimate = await serviceWithCallGas.estimateUserOperationGas(
+      buildUserOperation({ callGasLimit: "0x50000" }),
+      ENTRY_POINT_V07,
+    );
+
+    // Client provided 0x50000 (327680) — should be used as-is
+    expect(estimate.callGasLimit).toBe("0x50000");
+  });
+
+  it("applies custom heuristic multiplier when estimator returns null", async () => {
+    const serviceWithCustomConfig = new BundlerService({
+      chainId: 167000,
+      entryPoints: [ENTRY_POINT_V07],
+      callGasEstimator: new FakeCallGasEstimator(null),
+      callGasHeuristicMultiplier: 5n,
+    });
+
+    const estimate = await serviceWithCustomConfig.estimateUserOperationGas(
+      buildUserOperation(),
+      ENTRY_POINT_V07,
+    );
+
+    // Heuristic: 55032. Multiplied by 5: 275160 = 0x432d8
+    expect(estimate.callGasLimit).toBe("0x432d8");
   });
 
   it("stores pending user operations and resolves lookups", async () => {
