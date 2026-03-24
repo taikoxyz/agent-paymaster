@@ -133,6 +133,9 @@ Responsibilities:
   - Inherits `BasePaymaster` (ERC-4337 compatible base).
   - Supports packed `paymasterData` with permit and quote signature fields.
   - Emits sponsorship accounting events.
+- `ServoAccount` (canonical agent account)
+  - Single-owner ERC-4337 account used by ServoAccountFactory.
+  - Supports ERC-1271 permit validation and ERC-721 safe receipt via OpenZeppelin `ERC721Holder`, so registries that mint with `_safeMint` can mint directly to the account.
 - `PaymasterSignerRegistry` (optional module)
   - Maintains authorized quote signer keys.
 - `PriceSafetyConfig` (optional module)

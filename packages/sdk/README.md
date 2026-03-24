@@ -39,7 +39,7 @@ const result = await createAndExecute({
   owner,
   entryPoint: "0x0000000071727de22e5e9d8baf0edac6f37da032",
   chain: "taikoMainnet",
-  factoryAddress: "0x0000000000000000000000000000000000000000", // replace
+  factoryAddress: "0x4055ec5bf8f7910A23F9eBFba38421c5e24E2716",
   salt: 1n,
   nonce: 0n,
   calls: [

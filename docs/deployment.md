@@ -8,7 +8,7 @@
 | ----------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **EntryPoint v0.7**     | `0x0000000071727De22E5E9d8BAf0edAc6f37da032` | Canonical ERC-4337 singleton (same address on every EVM chain). Routes all UserOps: deploys accounts via initCode, validates signatures, calls paymaster, settles gas.                     |
 | **TaikoUsdcPaymaster**  | `0xca675148201e29b13a848ce30c3074c8de995891` | Validates off-chain EIP-712 signed gas quotes, executes USDC permits, locks `maxTokenCost` USDC during validation, settles actual cost in `_postOp`, refunds surplus to the agent.         |
-| **ServoAccountFactory** | `0xCa245Ae9B786EF420Dc359430e5833b840880619` | Deterministic CREATE2 factory for agent wallets. Agents derive their address with `getAddress(owner, salt)` before deployment, fund it with USDC, and the factory deploys on first UserOp. |
+| **ServoAccountFactory** | `0x4055ec5bf8f7910A23F9eBFba38421c5e24E2716` | Deterministic CREATE2 factory for agent wallets. Deploys the current ServoAccount implementation with ERC-1271 validation and ERC-721 safe-receive support for registry `_safeMint` flows. |
 | **USDC**                | `0x07d83526730c7438048D55A4fc0b850e2aaB6f0b` | Circle's bridged USDC on Taiko. 6 decimals. Supports both ERC-2612 permit variants (v/r/s and bytes signature).                                                                            |
 
 ### Paymaster configuration

@@ -18,7 +18,7 @@ Key addresses on Taiko Alethia (chain 167000):
 
 | Contract            | Address                                      |
 | ------------------- | -------------------------------------------- |
-| ServoAccountFactory | `0xCa245Ae9B786EF420Dc359430e5833b840880619` |
+| ServoAccountFactory | `0x4055ec5bf8f7910A23F9eBFba38421c5e24E2716` |
 | EntryPoint v0.7     | `0x0000000071727De22E5E9d8BAf0edAc6f37da032` |
 | USDC                | `0x07d83526730c7438048D55A4fc0b850e2aaB6f0b` |
 
@@ -127,8 +127,8 @@ Key contracts in `packages/paymaster-contracts/src`:
 
 - `TaikoUsdcPaymaster.sol` — paymaster quote verification and USDC settlement.
 - `Permit4337Account.sol` — minimal ERC-4337 account with ERC-1271 permit support (smoke-test helper).
-- `ServoAccount.sol` — canonical Servo single-owner ERC-4337 account with `execute` and `executeBatch`.
-- `ServoAccountFactory.sol` — deterministic CREATE2 factory for ServoAccount deployment and address derivation.
+- `ServoAccount.sol` — canonical Servo single-owner ERC-4337 account with `execute`, `executeBatch`, ERC-1271 validation, and ERC-721 safe-receive support via OpenZeppelin `ERC721Holder`.
+- `ServoAccountFactory.sol` — deterministic CREATE2 factory for ServoAccount deployment and address derivation. New Taiko mainnet deployments should use `0x4055ec5bf8f7910A23F9eBFba38421c5e24E2716`.
 
 SDK package:
 
@@ -144,9 +144,9 @@ Two Dockerfiles: `Dockerfile` (API, port 3000) and `Dockerfile.bundler` (bundler
 
 ## Networks
 
-| Network                 | Chain ID | Status     |
-| ----------------------- | -------- | ---------- |
-| Taiko Alethia (mainnet) | 167000   | Production     |
+| Network                 | Chain ID | Status           |
+| ----------------------- | -------- | ---------------- |
+| Taiko Alethia (mainnet) | 167000   | Production       |
 | Taiko Hoodi (testnet)   | 167013   | Not yet deployed |
 
 ## Development

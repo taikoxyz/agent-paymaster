@@ -6,12 +6,13 @@ import {SIG_VALIDATION_FAILED, SIG_VALIDATION_SUCCESS} from "account-abstraction
 import {IEntryPoint} from "account-abstraction/contracts/interfaces/IEntryPoint.sol";
 import {PackedUserOperation} from "account-abstraction/contracts/interfaces/PackedUserOperation.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
+import {ERC721Holder} from "@openzeppelin/contracts/token/ERC721/utils/ERC721Holder.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 /// @title ServoAccount
-/// @notice Minimal Servo-native ERC-4337 account with ERC-1271 support for permit signatures.
-contract ServoAccount is BaseAccount, IERC1271 {
+/// @notice Minimal Servo-native ERC-4337 account with ERC-1271 permit validation and ERC-721 safe-receive support.
+contract ServoAccount is BaseAccount, IERC1271, ERC721Holder {
     error InvalidEntryPoint();
     error InvalidOwner();
     error Unauthorized();

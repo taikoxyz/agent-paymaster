@@ -64,7 +64,7 @@ Monitoring signals exposed in `/metrics` include submitter ETH balance, mempool 
 **Solidity 0.8.24** with Foundry (optimizer 200 runs, via-ir, Cancun EVM).
 
 - `TaikoUsdcPaymaster.sol` — main paymaster: quote validation, permit support, USDC settlement
-- `ServoAccount.sol` — canonical single-owner ERC-4337 account with ERC-1271 permit validation
+- `ServoAccount.sol` — canonical single-owner ERC-4337 account with ERC-1271 permit validation and ERC-721 safe-receive support via OpenZeppelin `ERC721Holder` (required for ERC-8004 registry registration, which mints via `_safeMint`)
 - `ServoAccountFactory.sol` — deterministic CREATE2 factory for ServoAccount deployment and address derivation
 - `PaymasterStub.sol` — testing stub (in `test/`)
 - `Permit4337Account.sol` — smoke-test account (in `test/`)

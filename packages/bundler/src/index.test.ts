@@ -506,7 +506,7 @@ describe("BundlerService", () => {
   });
 
   it("accepts v0.7 factory/factoryData fields", async () => {
-    const factory = "0xCa245Ae9B786EF420Dc359430e5833b840880619";
+    const factory = "0x4055ec5bf8f7910A23F9eBFba38421c5e24E2716";
     const factoryData = "0xabcdef";
     const estimate = await service.estimateUserOperationGas(
       {
@@ -561,7 +561,7 @@ describe("BundlerService", () => {
           sender: "0x1111111111111111111111111111111111111111",
           nonce: "0x1",
           initCode: "0x1234",
-          factory: "0xCa245Ae9B786EF420Dc359430e5833b840880619",
+          factory: "0x4055ec5bf8f7910A23F9eBFba38421c5e24E2716",
           callData: "0x1234",
           maxFeePerGas: "0x100",
           maxPriorityFeePerGas: "0x10",

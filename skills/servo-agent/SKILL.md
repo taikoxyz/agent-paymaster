@@ -26,7 +26,7 @@ Servo is an ERC-4337 paymaster + bundler for Taiko. Agents pay gas in USDC — n
 | ----------------------- | ------------------------------------------------ |
 | **Servo RPC**           | `https://api-production-cdfe.up.railway.app/rpc` |
 | **TaikoUsdcPaymaster**  | `0xca675148201e29b13a848ce30c3074c8de995891`     |
-| **ServoAccountFactory** | `0xCa245Ae9B786EF420Dc359430e5833b840880619`     |
+| **ServoAccountFactory** | `0x4055ec5bf8f7910A23F9eBFba38421c5e24E2716`     |
 | **EntryPoint v0.7**     | `0x0000000071727De22E5E9d8BAf0edAc6f37da032`     |
 | **USDC**                | `0x07d83526730c7438048D55A4fc0b850e2aaB6f0b`     |
 | **Taiko RPC**           | `https://rpc.mainnet.taiko.xyz`                  |
@@ -54,7 +54,7 @@ const publicClient = createPublicClient({
 
 const SERVO_RPC = "https://api-production-cdfe.up.railway.app/rpc";
 const ENTRY_POINT = "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
-const FACTORY = "0xCa245Ae9B786EF420Dc359430e5833b840880619";
+const FACTORY = "0x4055ec5bf8f7910A23F9eBFba38421c5e24E2716";
 const USDC = "0x07d83526730c7438048D55A4fc0b850e2aaB6f0b";
 
 const factoryAbi = parseAbi([
@@ -128,9 +128,7 @@ Call `GET /capabilities` to get `gasPriceGuidance`, then use `suggestedMaxFeePer
 
 ```typescript
 // 5a — Fetch current gas prices from Servo
-const capsResponse = await fetch(
-  "https://api-production-cdfe.up.railway.app/capabilities",
-);
+const capsResponse = await fetch("https://api-production-cdfe.up.railway.app/capabilities");
 const caps = await capsResponse.json();
 const gasGuidance = caps.gasPriceGuidance;
 // gasGuidance.suggestedMaxFeePerGas     — e.g. "0x11a5536" (~0.02 gwei)
@@ -149,8 +147,8 @@ const stubResponse = await fetch(SERVO_RPC, {
       {
         sender: accountAddress,
         nonce: "0x0",
-        factory,       // v0.7 separate field
-        factoryData,   // v0.7 separate field
+        factory, // v0.7 separate field
+        factoryData, // v0.7 separate field
         callData,
         maxFeePerGas: gasGuidance.suggestedMaxFeePerGas,
         maxPriorityFeePerGas: gasGuidance.suggestedMaxPriorityFeePerGas,

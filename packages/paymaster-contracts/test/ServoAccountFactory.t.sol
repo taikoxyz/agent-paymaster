@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {IEntryPoint} from "account-abstraction/contracts/interfaces/IEntryPoint.sol";
 import {PackedUserOperation} from "account-abstraction/contracts/interfaces/PackedUserOperation.sol";
 import {SIG_VALIDATION_FAILED, SIG_VALIDATION_SUCCESS} from "account-abstraction/contracts/core/Helpers.sol";
+import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {ServoAccount} from "../src/ServoAccount.sol";
 import {ServoAccountFactory} from "../src/ServoAccountFactory.sol";
@@ -20,6 +21,14 @@ contract ExecuteTarget {
 
     function willRevert() external pure {
         revert("TARGET_REVERT");
+    }
+}
+
+contract MockERC721 is ERC721 {
+    constructor() ERC721("Mock Registry", "MOCK") {}
+
+    function safeMint(address to, uint256 tokenId) external {
+        _safeMint(to, tokenId);
     }
 }
 
@@ -179,6 +188,29 @@ contract ServoAccountFactoryTest is Test {
 
         assertEq(token.allowance(address(account), spender), value);
         assertEq(token.nonces(address(account)), nonce + 1);
+    }
+
+    function test_safeMintToAccountSucceeds() public {
+        ServoAccount account = _deployAccount();
+        MockERC721 token = new MockERC721();
+
+        token.safeMint(address(account), 1);
+
+        assertEq(token.ownerOf(1), address(account));
+        assertEq(token.balanceOf(address(account)), 1);
+    }
+
+    function test_safeTransferToAccountSucceeds() public {
+        ServoAccount account = _deployAccount();
+        MockERC721 token = new MockERC721();
+
+        token.safeMint(owner, 1);
+
+        vm.prank(owner);
+        token.safeTransferFrom(owner, address(account), 1);
+
+        assertEq(token.ownerOf(1), address(account));
+        assertEq(token.balanceOf(address(account)), 1);
     }
 
     function _deployAccount() internal returns (ServoAccount) {

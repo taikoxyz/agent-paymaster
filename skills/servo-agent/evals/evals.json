@@ -23,7 +23,7 @@
           "name": "correct_factory",
           "description": "Uses the correct ServoAccountFactory address",
           "type": "output_contains_pattern",
-          "pattern": "0xCa245Ae9B786EF420Dc359430e5833b840880619"
+          "pattern": "0x4055ec5bf8f7910A23F9eBFba38421c5e24E2716"
         },
         {
           "name": "explains_counterfactual",
