@@ -292,6 +292,9 @@ interface BundlerConfigInput {
   paymasterPostOpGasLimit?: bigint;
   maxFinalizedOperations?: number;
   gasSimulator?: GasSimulator;
+  callGasEstimator?: CallGasEstimator;
+  callGasBufferPercent?: bigint;
+  callGasHeuristicMultiplier?: bigint;
   admissionSimulator?: AdmissionSimulator;
 }
 
@@ -314,6 +317,8 @@ interface BundlerConfig {
   l1DataGasScalar: bigint;
   paymasterVerificationGasLimit: bigint;
   paymasterPostOpGasLimit: bigint;
+  callGasBufferPercent: bigint;
+  callGasHeuristicMultiplier: bigint;
   maxFinalizedOperations: number;
 }
 
@@ -323,6 +328,14 @@ export interface GasSimulator {
     entryPoint: HexString,
     baseline: UserOperationGasEstimate,
   ): Promise<bigint>;
+}
+
+export interface CallGasEstimator {
+  estimateCallGas(
+    sender: HexString,
+    callData: HexString,
+    entryPoint: HexString,
+  ): Promise<bigint | null>;
 }
 
 export interface AdmissionSimulator {
@@ -597,6 +610,56 @@ export class ViemGasSimulator implements GasSimulator {
   }
 }
 
+export class ViemCallGasEstimator implements CallGasEstimator {
+  private readonly publicClient;
+  private readonly bufferPercent: bigint;
+
+  constructor(rpcUrl: string, chain?: Chain, bufferPercent = 15n) {
+    this.publicClient = createPublicClient({
+      chain,
+      transport: http(rpcUrl),
+    });
+    this.bufferPercent = bufferPercent;
+  }
+
+  async estimateCallGas(
+    sender: HexString,
+    callData: HexString,
+    entryPoint: HexString,
+  ): Promise<bigint | null> {
+    // Skip estimation for empty callData (no inner execution)
+    if (callData === "0x" || callData === "0x00") {
+      return null;
+    }
+
+    // Check if sender contract exists (undeployed accounts can't be simulated)
+    const code = await this.publicClient.getCode({ address: sender });
+    if (code === undefined || code === "0x") {
+      return null;
+    }
+
+    try {
+      const estimatedGas = await this.publicClient.estimateGas({
+        account: entryPoint,
+        to: sender,
+        data: callData,
+      });
+
+      // Apply safety buffer for EntryPoint overhead:
+      // - 1/64 gas lost at EntryPoint → account call boundary (EIP-150)
+      // - EntryPoint bookkeeping gas around the call (~3-5K)
+      const buffered = estimatedGas + (estimatedGas * this.bufferPercent) / 100n;
+      return buffered;
+    } catch (error) {
+      logEvent("warn", "bundler.call_gas_estimation_failed", {
+        sender,
+        reason: error instanceof Error ? error.message : "estimation_failed",
+      });
+      return null;
+    }
+  }
+}
+
 export class ViemAdmissionSimulator implements AdmissionSimulator {
   private readonly publicClient;
 
@@ -644,6 +707,7 @@ export class BundlerService {
   private readonly senderReputation = new Map<string, SenderReputation>();
   private readonly persistence?: BundlerPersistence;
   private readonly gasSimulator?: GasSimulator;
+  private readonly callGasEstimator?: CallGasEstimator;
   private readonly admissionSimulator?: AdmissionSimulator;
   private readonly simulationFailureReasons = new Map<string, number>();
   private readonly revertReasons = new Map<string, number>();
@@ -676,9 +740,12 @@ export class BundlerService {
       l1DataGasScalar: config.l1DataGasScalar ?? 1n,
       paymasterVerificationGasLimit: config.paymasterVerificationGasLimit ?? 200_000n,
       paymasterPostOpGasLimit: config.paymasterPostOpGasLimit ?? 80_000n,
+      callGasBufferPercent: config.callGasBufferPercent ?? 15n,
+      callGasHeuristicMultiplier: config.callGasHeuristicMultiplier ?? 3n,
       maxFinalizedOperations: config.maxFinalizedOperations ?? 10_000,
     };
     this.gasSimulator = config.gasSimulator;
+    this.callGasEstimator = config.callGasEstimator;
     this.admissionSimulator = config.admissionSimulator;
 
     this.persistence = persistence;
@@ -870,7 +937,7 @@ export class BundlerService {
     const callDataBytes = getBytesLength(userOperation.callData);
     const initCodeBytes = getBytesLength(userOperation.initCode);
 
-    const callGasLimit =
+    let callGasLimit =
       userOperation.callGasLimit !== undefined
         ? hexToBigInt(userOperation.callGasLimit)
         : this.config.baseCallGas + callDataBytes * this.config.perByteCallDataGas;
@@ -928,6 +995,31 @@ export class BundlerService {
           sender: userOperation.sender,
           reason: error instanceof Error ? error.message : "simulation_failed",
         });
+      }
+    }
+
+    // Call gas estimation: replace heuristic with simulation when available
+    if (this.callGasEstimator !== undefined && userOperation.callGasLimit === undefined) {
+      try {
+        const simulatedCallGas = await this.callGasEstimator.estimateCallGas(
+          userOperation.sender,
+          userOperation.callData,
+          entryPoint,
+        );
+        if (simulatedCallGas !== null) {
+          callGasLimit = simulatedCallGas;
+        } else {
+          // Estimation unavailable (undeployed account or empty callData) — scale heuristic
+          callGasLimit = callGasLimit * this.config.callGasHeuristicMultiplier;
+        }
+      } catch (error) {
+        logEvent("warn", "bundler.call_gas_estimator_error", {
+          entryPoint,
+          sender: userOperation.sender,
+          reason: error instanceof Error ? error.message : "call_gas_estimation_error",
+        });
+        // Estimator threw unexpectedly — scale heuristic as fallback
+        callGasLimit = callGasLimit * this.config.callGasHeuristicMultiplier;
       }
     }
 
