@@ -10,7 +10,7 @@ import {
 } from "./entrypoint.js";
 import { logEvent } from "./logger.js";
 
-import type { HexString, UserOperation } from "./index.js";
+import type { HexString, UserOperation, UserOperationReceiptLog } from "./index.js";
 import type { BundlerService, ClaimedUserOperation, ClaimedUserOperations } from "./index.js";
 
 export interface SubmissionClient {
@@ -32,11 +32,7 @@ export interface SubmissionReceipt {
   blockHash: HexString;
   status: "success" | "reverted";
   effectiveGasPrice?: bigint;
-  logs: Array<{
-    address: string;
-    data: HexString;
-    topics: readonly HexString[];
-  }>;
+  logs: UserOperationReceiptLog[];
 }
 
 export interface BundlerSubmitterConfig {
@@ -196,6 +192,16 @@ export class ViemSubmissionClient implements SubmissionClient {
           address: log.address,
           data: log.data,
           topics: log.topics,
+          blockHash: log.blockHash ?? undefined,
+          blockNumber: log.blockNumber === null ? undefined : toHex(log.blockNumber),
+          transactionHash: log.transactionHash ?? undefined,
+          transactionIndex:
+            log.transactionIndex === null || log.transactionIndex === undefined
+              ? undefined
+              : toHex(log.transactionIndex),
+          logIndex:
+            log.logIndex === null || log.logIndex === undefined ? undefined : toHex(log.logIndex),
+          removed: log.removed,
         })),
       };
     } catch (error) {
@@ -613,6 +619,7 @@ export class BundlerSubmitter {
           effectiveGasPrice,
           success: false,
           reason: "bundle_submission_reverted",
+          logs: receipt.logs,
         });
       }
 
@@ -638,6 +645,7 @@ export class BundlerSubmitter {
           effectiveGasPrice,
           success: false,
           reason: "user_operation_event_missing",
+          logs: receipt.logs,
         });
         continue;
       }
@@ -651,6 +659,7 @@ export class BundlerSubmitter {
         effectiveGasPrice,
         success: execution.success,
         reason: execution.success ? undefined : (execution.revertReason ?? "execution_reverted"),
+        logs: receipt.logs,
       });
     }
 

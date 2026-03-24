@@ -76,6 +76,18 @@ export interface UserOperationLookupResult {
   blockHash: HexString | null;
 }
 
+export interface UserOperationReceiptLog {
+  address: HexString;
+  data: HexString;
+  topics: readonly HexString[];
+  blockHash?: HexString;
+  blockNumber?: HexString;
+  transactionHash?: HexString;
+  transactionIndex?: HexString;
+  logIndex?: HexString;
+  removed?: boolean;
+}
+
 export interface UserOperationReceipt {
   userOpHash: string;
   sender: string;
@@ -85,6 +97,7 @@ export interface UserOperationReceipt {
   actualGasCost: HexString;
   actualGasUsed: HexString;
   reason: string | null;
+  logs: UserOperationReceiptLog[];
   receipt: {
     transactionHash: string;
     blockNumber: HexString;
@@ -92,6 +105,7 @@ export interface UserOperationReceipt {
     effectiveGasPrice: HexString;
     gasUsed: HexString;
     status: HexString;
+    logs: UserOperationReceiptLog[];
   };
 }
 
@@ -166,6 +180,7 @@ interface StoredUserOperation {
   gasUsed: bigint | null;
   gasCost: bigint | null;
   effectiveGasPrice: bigint | null;
+  receiptLogs: UserOperationReceiptLog[] | null;
   finalizedAt: number | null;
 }
 
@@ -235,6 +250,7 @@ export interface BundlerPersistence {
     gasUsed: bigint | null;
     gasCost: bigint | null;
     effectiveGasPrice: bigint | null;
+    receiptLogs: UserOperationReceiptLog[] | null;
   }): void;
   deleteFinalizedOperation(hash: string): void;
   loadFinalizedOperations(): Array<{
@@ -251,6 +267,7 @@ export interface BundlerPersistence {
     gasUsed: bigint | null;
     gasCost: bigint | null;
     effectiveGasPrice: bigint | null;
+    receiptLogs: UserOperationReceiptLog[] | null;
   }>;
   pruneFinalizedOperations(maxEntries: number): string[];
   saveSenderReputation(
@@ -362,6 +379,7 @@ interface BundleSubmission {
   success?: boolean;
   reason?: string;
   revertReason?: string;
+  logs?: UserOperationReceiptLog[];
 }
 
 const MEMPOOL_AGE_BUCKETS_MS = [30_000, 60_000, 300_000, 900_000] as const;
@@ -446,6 +464,65 @@ const normalizeAddress = (value: string): HexString => {
   }
 
   return value.toLowerCase() as HexString;
+};
+
+const parseOptionalHexQuantity = (value: unknown, fieldName: string): HexString | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  return parseHexField(value, fieldName);
+};
+
+const parseHashField = (value: unknown, fieldName: string): HexString => {
+  const normalized = parseHexField(value, fieldName);
+  if (normalized.length !== 66) {
+    throw new BundlerRpcError(RPC_INVALID_PARAMS, `${fieldName} must be 32 bytes`, {
+      reason: "hash_invalid_length",
+      field: fieldName,
+    });
+  }
+
+  return normalized;
+};
+
+const parseReceiptLog = (logInput: unknown, index: number): UserOperationReceiptLog => {
+  if (!isObject(logInput)) {
+    throw new BundlerRpcError(RPC_INVALID_PARAMS, `logs[${index}] must be an object`, {
+      reason: "submission_log_invalid",
+      field: `logs[${index}]`,
+    });
+  }
+
+  if (!Array.isArray(logInput.topics)) {
+    throw new BundlerRpcError(RPC_INVALID_PARAMS, `logs[${index}].topics must be an array`, {
+      reason: "submission_log_topics_invalid",
+      field: `logs[${index}].topics`,
+    });
+  }
+
+  return {
+    address: normalizeAddress(String(logInput.address)),
+    data: parseHexField(logInput.data, `logs[${index}].data`),
+    topics: logInput.topics.map((topic, topicIndex) =>
+      parseHexField(topic, `logs[${index}].topics[${topicIndex}]`),
+    ),
+    blockHash:
+      logInput.blockHash === undefined
+        ? undefined
+        : parseHashField(logInput.blockHash, `logs[${index}].blockHash`),
+    blockNumber: parseOptionalHexQuantity(logInput.blockNumber, `logs[${index}].blockNumber`),
+    transactionHash:
+      logInput.transactionHash === undefined
+        ? undefined
+        : parseHashField(logInput.transactionHash, `logs[${index}].transactionHash`),
+    transactionIndex: parseOptionalHexQuantity(
+      logInput.transactionIndex,
+      `logs[${index}].transactionIndex`,
+    ),
+    logIndex: parseOptionalHexQuantity(logInput.logIndex, `logs[${index}].logIndex`),
+    removed: logInput.removed === undefined ? undefined : Boolean(logInput.removed),
+  };
 };
 
 const getBytesLength = (hexValue: string): bigint => {
@@ -799,6 +876,7 @@ export class BundlerService {
         gasUsed: entry.gasUsed,
         gasCost: entry.gasCost,
         effectiveGasPrice: entry.effectiveGasPrice,
+        receiptLogs: entry.receiptLogs,
         finalizedAt: entry.finalizedAt,
       });
       stored.estimatedGasLimit = this.getDeclaredGasLimit(entry.userOperation);
@@ -1189,6 +1267,7 @@ export class BundlerService {
 
     const gasUsed = operation.gasUsed ?? 0n;
     const gasCost = operation.gasCost ?? 0n;
+    const receiptLogs = operation.receiptLogs ?? [];
 
     return {
       userOpHash: operation.hash,
@@ -1199,6 +1278,7 @@ export class BundlerService {
       actualGasCost: bigIntToHex(gasCost),
       actualGasUsed: bigIntToHex(gasUsed),
       reason: operation.reason,
+      logs: receiptLogs,
       receipt: {
         transactionHash: operation.transactionHash,
         blockNumber: bigIntToHex(BigInt(operation.blockNumber)),
@@ -1209,6 +1289,7 @@ export class BundlerService {
             : bigIntToHex(operation.effectiveGasPrice),
         gasUsed: bigIntToHex(gasUsed),
         status: operation.state === "included" ? "0x1" : "0x0",
+        logs: receiptLogs,
       },
     };
   }
@@ -1331,6 +1412,7 @@ export class BundlerService {
     operation.gasUsed = gasUsed;
     operation.gasCost = gasCost;
     operation.effectiveGasPrice = gasPrice;
+    operation.receiptLogs = submission.logs ?? null;
     operation.finalizedAt = Date.now();
 
     if (operation.estimatedGasLimit !== null && operation.estimatedGasLimit > 0n) {
@@ -1429,6 +1511,7 @@ export class BundlerService {
     operation.gasUsed = null;
     operation.gasCost = null;
     operation.effectiveGasPrice = null;
+    operation.receiptLogs = null;
     operation.finalizedAt = Date.now();
     this.userOpsFailedTotal += 1;
     incrementReasonCounter(this.simulationFailureReasons, reason);
@@ -1453,6 +1536,7 @@ export class BundlerService {
     gasUsed = null,
     gasCost = null,
     effectiveGasPrice = null,
+    receiptLogs = null,
     finalizedAt = null,
   }: {
     hash: string;
@@ -1469,6 +1553,7 @@ export class BundlerService {
     gasUsed?: bigint | null;
     gasCost?: bigint | null;
     effectiveGasPrice?: bigint | null;
+    receiptLogs?: UserOperationReceiptLog[] | null;
     finalizedAt?: number | null;
   }): StoredUserOperation {
     return {
@@ -1488,6 +1573,7 @@ export class BundlerService {
       gasUsed,
       gasCost,
       effectiveGasPrice,
+      receiptLogs,
       finalizedAt,
     };
   }
@@ -1511,6 +1597,7 @@ export class BundlerService {
     operation.gasUsed = null;
     operation.gasCost = null;
     operation.effectiveGasPrice = null;
+    operation.receiptLogs = null;
     operation.finalizedAt = null;
 
     this.persistence?.deleteFinalizedOperation(operation.hash);
@@ -1541,6 +1628,7 @@ export class BundlerService {
       gasUsed: operation.gasUsed,
       gasCost: operation.gasCost,
       effectiveGasPrice: operation.effectiveGasPrice,
+      receiptLogs: operation.receiptLogs,
     });
   }
 
@@ -1943,6 +2031,9 @@ export class BundlerService {
         submissionInput.revertReason === undefined
           ? undefined
           : String(submissionInput.revertReason),
+      logs: Array.isArray(submissionInput.logs)
+        ? submissionInput.logs.map((log, index) => parseReceiptLog(log, index))
+        : undefined,
     };
   }
 

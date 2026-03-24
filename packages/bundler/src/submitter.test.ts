@@ -6,6 +6,7 @@ import {
   BundlerService,
   type BundlerPersistence,
   type HexString,
+  type UserOperationReceiptLog,
   type UserOperation,
 } from "./index.js";
 import {
@@ -213,6 +214,7 @@ class FakePersistence implements BundlerPersistence {
     gasUsed: bigint | null;
     gasCost: bigint | null;
     effectiveGasPrice: bigint | null;
+    receiptLogs: UserOperationReceiptLog[] | null;
   }): void {
     void operation;
   }
@@ -235,6 +237,7 @@ class FakePersistence implements BundlerPersistence {
     gasUsed: bigint | null;
     gasCost: bigint | null;
     effectiveGasPrice: bigint | null;
+    receiptLogs: UserOperationReceiptLog[] | null;
   }> {
     return [];
   }
@@ -394,6 +397,8 @@ describe("BundlerSubmitter", () => {
     expect(receipt?.actualGasCost).toBe("0x78");
     expect(receipt?.actualGasUsed).toBe("0x1e");
     expect(receipt?.receipt.transactionHash).toBe(client.nextTransactionHash);
+    expect(receipt?.logs).toHaveLength(1);
+    expect(receipt?.receipt.logs).toHaveLength(1);
     expect(service.getHealth().operationalMetrics).toMatchObject({
       userOpsAcceptedTotal: 1,
       userOpsIncludedTotal: 1,

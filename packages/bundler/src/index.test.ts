@@ -10,6 +10,7 @@ import {
   type BundlerPersistence,
   type HexString,
   type GasSimulator,
+  type UserOperationReceiptLog,
   type UserOperation,
 } from "./index.js";
 
@@ -136,6 +137,7 @@ class FakeBundlerPersistence implements BundlerPersistence {
       gasUsed: bigint | null;
       gasCost: bigint | null;
       effectiveGasPrice: bigint | null;
+      receiptLogs: UserOperationReceiptLog[] | null;
     }
   >();
   readonly senderReputations = new Map<
@@ -236,6 +238,7 @@ class FakeBundlerPersistence implements BundlerPersistence {
     gasUsed: bigint | null;
     gasCost: bigint | null;
     effectiveGasPrice: bigint | null;
+    receiptLogs: UserOperationReceiptLog[] | null;
   }): void {
     this.finalizedOperations.set(operation.hash, {
       entryPoint: operation.entryPoint,
@@ -250,6 +253,7 @@ class FakeBundlerPersistence implements BundlerPersistence {
       gasUsed: operation.gasUsed,
       gasCost: operation.gasCost,
       effectiveGasPrice: operation.effectiveGasPrice,
+      receiptLogs: operation.receiptLogs,
     });
   }
 
@@ -271,6 +275,7 @@ class FakeBundlerPersistence implements BundlerPersistence {
     gasUsed: bigint | null;
     gasCost: bigint | null;
     effectiveGasPrice: bigint | null;
+    receiptLogs: UserOperationReceiptLog[] | null;
   }> {
     return [...this.finalizedOperations.entries()].map(([hash, value]) => ({
       hash,
@@ -286,6 +291,7 @@ class FakeBundlerPersistence implements BundlerPersistence {
       gasUsed: value.gasUsed,
       gasCost: value.gasCost,
       effectiveGasPrice: value.effectiveGasPrice,
+      receiptLogs: value.receiptLogs,
     }));
   }
 
@@ -906,6 +912,8 @@ describe("BundlerService", () => {
     expect(receipt?.receipt.blockHash).toBe(
       "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
     );
+    expect(receipt?.logs).toEqual([]);
+    expect(receipt?.receipt.logs).toEqual([]);
   });
 
   it("stores failed bundle submission reason from revert metadata", async () => {
@@ -1097,6 +1105,65 @@ describe("BundlerService", () => {
       "0xefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
     );
     expect(receipt?.actualGasUsed).toBe("0x55");
+    expect(receipt?.logs).toEqual([]);
+  });
+
+  it("restores finalized receipt logs from persistence", async () => {
+    const persistence = new FakeBundlerPersistence();
+    const firstService = new BundlerService(
+      {
+        chainId: 167000,
+        entryPoints: [ENTRY_POINT_V07],
+      },
+      persistence,
+    );
+
+    const userOpHash = await firstService.sendUserOperation(buildUserOperation(), ENTRY_POINT_V07);
+    const bundle = firstService.createBundle(1);
+    if (!bundle) {
+      throw new Error("expected bundle to be created");
+    }
+
+    firstService.markBundleSubmitted(bundle.bundleHash, {
+      transactionHash: "0xabababababababababababababababababababababababababababababababab",
+      blockNumber: 321,
+      blockHash: "0xefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      gasUsed: "0x55",
+      gasCost: "0xaa",
+      effectiveGasPrice: "0x2",
+      success: true,
+      logs: [
+        {
+          address: "0x1111111111111111111111111111111111111111",
+          data: "0x1234",
+          topics: ["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+          blockNumber: "0x141",
+          transactionIndex: "0x1",
+          logIndex: "0x0",
+        },
+      ],
+    });
+
+    const secondService = new BundlerService(
+      {
+        chainId: 167000,
+        entryPoints: [ENTRY_POINT_V07],
+      },
+      persistence,
+    );
+
+    const receipt = secondService.getUserOperationReceipt(userOpHash);
+    expect(receipt?.logs).toEqual([
+      {
+        address: "0x1111111111111111111111111111111111111111",
+        data: "0x1234",
+        topics: ["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+        blockNumber: "0x141",
+        transactionIndex: "0x1",
+        logIndex: "0x0",
+      },
+    ]);
+    expect(receipt?.receipt.logs).toEqual(receipt?.logs);
   });
 
   it("prunes oldest finalized operations when retention limit is exceeded", async () => {

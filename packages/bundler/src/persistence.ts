@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 
 import Database from "better-sqlite3";
 
-import type { HexString, UserOperation } from "./index.js";
+import type { HexString, UserOperation, UserOperationReceiptLog } from "./index.js";
 
 const DEFAULT_DB_PATH = "./data/servo.db";
 
@@ -41,7 +41,8 @@ export class BundlerPersistenceStore {
         reason TEXT,
         gas_used TEXT,
         gas_cost TEXT,
-        effective_gas_price TEXT
+        effective_gas_price TEXT,
+        receipt_logs TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_finalized_user_operations_finalized_at
         ON finalized_user_operations(finalized_at);
@@ -56,6 +57,7 @@ export class BundlerPersistenceStore {
     `);
 
     this.migratePendingUserOperationsTable();
+    this.migrateFinalizedUserOperationsTable();
     this.migrateSenderReputationsTable();
     this.deleteExpiredSenderReputations();
   }
@@ -93,6 +95,17 @@ export class BundlerPersistenceStore {
 
     if (!columnNames.has("throttled_until")) {
       this.db.exec("ALTER TABLE sender_reputations ADD COLUMN throttled_until INTEGER");
+    }
+  }
+
+  private migrateFinalizedUserOperationsTable(): void {
+    const columns = this.db.prepare("PRAGMA table_info(finalized_user_operations)").all() as Array<{
+      name: string;
+    }>;
+    const columnNames = new Set(columns.map((column) => column.name));
+
+    if (!columnNames.has("receipt_logs")) {
+      this.db.exec("ALTER TABLE finalized_user_operations ADD COLUMN receipt_logs TEXT");
     }
   }
 
@@ -194,6 +207,7 @@ export class BundlerPersistenceStore {
     gasUsed: bigint | null;
     gasCost: bigint | null;
     effectiveGasPrice: bigint | null;
+    receiptLogs: UserOperationReceiptLog[] | null;
   }): void {
     this.db
       .prepare(
@@ -211,8 +225,9 @@ export class BundlerPersistenceStore {
             reason,
             gas_used,
             gas_cost,
-            effective_gas_price
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            effective_gas_price,
+            receipt_logs
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
       )
       .run(
@@ -229,6 +244,7 @@ export class BundlerPersistenceStore {
         operation.gasUsed === null ? null : operation.gasUsed.toString(),
         operation.gasCost === null ? null : operation.gasCost.toString(),
         operation.effectiveGasPrice === null ? null : operation.effectiveGasPrice.toString(),
+        operation.receiptLogs === null ? null : JSON.stringify(operation.receiptLogs),
       );
   }
 
@@ -250,6 +266,7 @@ export class BundlerPersistenceStore {
     gasUsed: bigint | null;
     gasCost: bigint | null;
     effectiveGasPrice: bigint | null;
+    receiptLogs: UserOperationReceiptLog[] | null;
   }> {
     const rows = this.db
       .prepare(
@@ -267,7 +284,8 @@ export class BundlerPersistenceStore {
             reason,
             gas_used,
             gas_cost,
-            effective_gas_price
+            effective_gas_price,
+            receipt_logs
           FROM finalized_user_operations
           ORDER BY finalized_at DESC
         `,
@@ -286,6 +304,7 @@ export class BundlerPersistenceStore {
       gas_used: string | null;
       gas_cost: string | null;
       effective_gas_price: string | null;
+      receipt_logs: string | null;
     }>;
 
     return rows
@@ -305,6 +324,10 @@ export class BundlerPersistenceStore {
         gasCost: row.gas_cost === null ? null : BigInt(row.gas_cost),
         effectiveGasPrice:
           row.effective_gas_price === null ? null : BigInt(row.effective_gas_price),
+        receiptLogs:
+          row.receipt_logs === null
+            ? null
+            : (JSON.parse(row.receipt_logs) as UserOperationReceiptLog[]),
       }));
   }
 

@@ -43,7 +43,7 @@ packages/
 6. UserOp executes
 7. Contract settles actual USDC cost in `_postOp`, refunds surplus
 
-Bundler lifecycle notes: pending and finalized UserOps are persisted in SQLite so receipt lookups survive restarts, failed hash-identical retries are requeued, and finalized retention is capped to keep memory bounded.
+Bundler lifecycle notes: pending and finalized UserOps are persisted in SQLite so receipt lookups survive restarts, finalized receipt logs remain available via `eth_getUserOperationReceipt`, failed hash-identical retries are requeued, and finalized retention is capped to keep memory bounded.
 
 **Key design decision**: pricing is off-chain (API signs bounded quotes), validation is on-chain (contract checks signature, never calls external oracles).
 
@@ -58,6 +58,8 @@ Bundler lifecycle notes: pending and finalized UserOps are persisted in SQLite s
 | GET    | `/openapi.json` | OpenAPI 3.1 spec                           |
 
 Monitoring signals exposed in `/metrics` include submitter ETH balance, mempool depth and age buckets, acceptance-to-inclusion success/latency, quote-to-submission conversion, and failure reason distributions.
+
+`eth_getUserOperationReceipt` returns receipt logs at both the top level (`logs`) and inside the nested transaction receipt (`receipt.logs`) so viem-compatible clients can parse emitted events directly.
 
 ## Contracts
 

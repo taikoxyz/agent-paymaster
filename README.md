@@ -43,7 +43,7 @@ The agent holds USDC but no ETH. The entire gas payment happens in USDC through 
 
 **2. Quote** — The agent signs an [EIP-2612 USDC permit](https://eips.ethereum.org/EIPS/eip-2612) for the quoted amount and calls `pm_getPaymasterData` with the permit attached. The API returns EIP-712 signed paymaster fields that the agent attaches to the UserOperation.
 
-**3. Submission** — The agent signs the final UserOperation and submits it via `eth_sendUserOperation`. The bundler validates it, stores it in the mempool, and a background submitter loop simulates and forwards it to `handleOps` on-chain. Finalized operation metadata is persisted so `eth_getUserOperationByHash` / `eth_getUserOperationReceipt` survive restarts, and exact-hash retries are requeued after failed attempts. The bundler pays ETH gas upfront and emits estimate-vs-actual gas drift events when operations finalize.
+**3. Submission** — The agent signs the final UserOperation and submits it via `eth_sendUserOperation`. The bundler validates it, stores it in the mempool, and a background submitter loop simulates and forwards it to `handleOps` on-chain. Finalized operation metadata, including emitted receipt logs, is persisted so `eth_getUserOperationByHash` / `eth_getUserOperationReceipt` survive restarts, and exact-hash retries are requeued after failed attempts. The bundler pays ETH gas upfront and emits estimate-vs-actual gas drift events when operations finalize.
 
 **4. On-chain settlement** — The EntryPoint calls the paymaster contract, which verifies the quote signature, executes the USDC permit, and locks `maxTokenCost` USDC from the agent. After the agent's transaction executes, the contract settles the actual gas cost in USDC and refunds any surplus back to the agent.
 
@@ -96,12 +96,13 @@ All paymaster and bundler methods go through a single JSON-RPC endpoint:
 POST /rpc
 ```
 
-| Method                     | Description                                    |
-| -------------------------- | ---------------------------------------------- |
-| `pm_getPaymasterStubData`  | Gas estimate + USDC cost quote (stub)          |
-| `pm_getPaymasterData`      | Signed paymaster fields (with optional permit) |
-| `eth_sendUserOperation`    | Submit UserOp (proxied to bundler)             |
-| `eth_supportedEntryPoints` | List supported EntryPoints                     |
+| Method                        | Description                                                              |
+| ----------------------------- | ------------------------------------------------------------------------ |
+| `pm_getPaymasterStubData`     | Gas estimate + USDC cost quote (stub)                                    |
+| `pm_getPaymasterData`         | Signed paymaster fields (with optional permit)                           |
+| `eth_sendUserOperation`       | Submit UserOp (proxied to bundler)                                       |
+| `eth_getUserOperationReceipt` | Finalized UserOp receipt with top-level `logs` and nested `receipt.logs` |
+| `eth_supportedEntryPoints`    | List supported EntryPoints                                               |
 
 Other routes: `GET /health`, `GET /status`, `GET /metrics`, `GET /openapi.json`. Bundler `/health` now includes submitter status, mempool depth/age distribution, and UserOp lifecycle monitoring counters.
 
