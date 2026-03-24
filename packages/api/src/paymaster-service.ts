@@ -114,7 +114,7 @@ const EMPTY_PERMIT: PermitData = {
 const DUMMY_SIGNATURE: `0x${string}` =
   "0xfffffffffffffffffffffffffffffff0000000000000000000000000000000007aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1c";
 
-export type ChainName = "taikoMainnet" | "taikoHekla" | "taikoHoodi";
+export type ChainName = "taikoMainnet" | "taikoHoodi";
 
 interface ChainConfig {
   name: ChainName;
@@ -123,7 +123,6 @@ interface ChainConfig {
 
 const CHAIN_CONFIGS: ChainConfig[] = [
   { name: "taikoMainnet", chainId: 167000 },
-  { name: "taikoHekla", chainId: 167009 },
   { name: "taikoHoodi", chainId: 167013 },
 ];
 
@@ -337,7 +336,7 @@ const resolveChain = (chainInput: unknown, chainIdInput: unknown): ChainConfig =
     return CHAIN_BY_NAME.get("taikomainnet") ?? CHAIN_CONFIGS[0];
   }
 
-  throw new Error("Unsupported chain. Supported values: taikoMainnet, taikoHekla, taikoHoodi");
+  throw new Error("Unsupported chain. Supported values: taikoMainnet, taikoHoodi");
 };
 
 const normalizeOptionalTokenAddresses = (
@@ -349,13 +348,6 @@ const normalizeOptionalTokenAddresses = (
     normalized.taikoMainnet = normalizeAddress(
       tokenAddresses.taikoMainnet,
       "tokenAddresses.taikoMainnet",
-    );
-  }
-
-  if (tokenAddresses.taikoHekla !== undefined) {
-    normalized.taikoHekla = normalizeAddress(
-      tokenAddresses.taikoHekla,
-      "tokenAddresses.taikoHekla",
     );
   }
 
@@ -420,6 +412,30 @@ const parseGasEstimate = (
   };
 };
 
+/**
+ * Resolves initCode from either v0.7 RPC format (factory + factoryData)
+ * or legacy packed format (initCode). Defaults to "0x" if neither is provided.
+ */
+const resolveInitCodeFromInput = (userOp: Record<string, unknown>): `0x${string}` => {
+  const hasInitCode = userOp.initCode !== undefined && userOp.initCode !== null;
+  const hasFactory = userOp.factory !== undefined && userOp.factory !== null;
+
+  if (hasInitCode && hasFactory) {
+    throw new Error("Provide either initCode or factory/factoryData, not both");
+  }
+
+  if (hasFactory) {
+    const factory = parseBytes(userOp.factory, "userOperation.factory");
+    if (factory === "0x") {
+      return "0x";
+    }
+    const factoryData = parseBytes(userOp.factoryData ?? "0x", "userOperation.factoryData");
+    return `${factory}${factoryData.slice(2)}` as `0x${string}`;
+  }
+
+  return parseBytes(userOp.initCode ?? "0x", "userOperation.initCode");
+};
+
 const parseQuoteInput = (input: unknown): ParsedQuoteInput => {
   if (!isObject(input)) {
     throw new Error("Request body must be an object");
@@ -447,7 +463,7 @@ const parseQuoteInput = (input: unknown): ParsedQuoteInput => {
     token: "USDC",
     userOperation: userOperationRaw,
     userOperationNonce: parseHexQuantity(userOperationRaw.nonce, "userOperation.nonce"),
-    initCode: parseBytes(userOperationRaw.initCode ?? "0x", "userOperation.initCode"),
+    initCode: resolveInitCodeFromInput(userOperationRaw),
     callData: parseBytes(userOperationRaw.callData, "userOperation.callData"),
     maxFeePerGas: parseHexQuantity(userOperationRaw.maxFeePerGas, "userOperation.maxFeePerGas"),
     maxPriorityFeePerGas: parseHexQuantity(

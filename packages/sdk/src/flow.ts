@@ -12,7 +12,6 @@ const DUMMY_SIGNATURE: Hex = `0x${"00".repeat(65)}`;
 
 const CHAIN_IDS: Record<ChainName, number> = {
   taikoMainnet: 167000,
-  taikoHekla: 167009,
   taikoHoodi: 167013,
 };
 

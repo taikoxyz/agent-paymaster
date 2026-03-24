@@ -1,4 +1,4 @@
-export type ChainName = "taikoMainnet" | "taikoHekla" | "taikoHoodi";
+export type ChainName = "taikoMainnet" | "taikoHoodi";
 export type HexString = `0x${string}`;
 export type Address = `0x${string}`;
 

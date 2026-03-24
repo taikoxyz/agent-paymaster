@@ -119,10 +119,8 @@ pnpm --filter @agent-paymaster/paymaster-contracts test                     # ru
 pnpm --filter @agent-paymaster/paymaster-contracts test:gas                 # gas report
 pnpm --filter @agent-paymaster/paymaster-contracts deploy:taiko-mainnet
 pnpm --filter @agent-paymaster/paymaster-contracts deploy:taiko-hoodi
-pnpm --filter @agent-paymaster/paymaster-contracts deploy:taiko-hekla
 pnpm --filter @agent-paymaster/paymaster-contracts deploy:factory:taiko-mainnet
 pnpm --filter @agent-paymaster/paymaster-contracts deploy:factory:taiko-hoodi
-pnpm --filter @agent-paymaster/paymaster-contracts deploy:factory:taiko-hekla
 ```
 
 Key contracts in `packages/paymaster-contracts/src`:
@@ -148,9 +146,8 @@ Two Dockerfiles: `Dockerfile` (API, port 3000) and `Dockerfile.bundler` (bundler
 
 | Network                 | Chain ID | Status     |
 | ----------------------- | -------- | ---------- |
-| Taiko Alethia (mainnet) | 167000   | Production |
-| Taiko Hekla (testnet)   | 167009   | Testnet    |
-| Taiko Hoodi (testnet)   | 167013   | Testnet    |
+| Taiko Alethia (mainnet) | 167000   | Production     |
+| Taiko Hoodi (testnet)   | 167013   | Not yet deployed |
 
 ## Development
 

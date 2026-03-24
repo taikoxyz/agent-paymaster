@@ -8,7 +8,7 @@ import { serve } from "@hono/node-server";
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import { createPublicClient, http, type Chain } from "viem";
-import { taiko, taikoHekla, taikoHoodi } from "viem/chains";
+import { taiko, taikoHoodi } from "viem/chains";
 
 import {
   buildCanonicalUserOpHash,
@@ -487,6 +487,47 @@ const parseHexField = (value: unknown, fieldName: string, optional = false): Hex
   return normalizeHex(value);
 };
 
+/**
+ * Resolves initCode from either:
+ * - v0.7 RPC format: `factory` + `factoryData` (separate fields, per ERC-4337 spec)
+ * - Legacy packed format: `initCode` (factory address concatenated with factoryData)
+ * - Neither provided: defaults to "0x" (existing account, no deployment)
+ */
+const resolveInitCode = (input: Record<string, unknown>): HexString => {
+  const hasInitCode = input.initCode !== undefined && input.initCode !== null;
+  const hasFactory = input.factory !== undefined && input.factory !== null;
+
+  if (hasInitCode && hasFactory) {
+    throw new BundlerRpcError(
+      RPC_INVALID_PARAMS,
+      "Provide either initCode or factory/factoryData, not both",
+      { reason: "initcode_ambiguous" },
+    );
+  }
+
+  if (hasFactory) {
+    const factory = parseHexField(input.factory, "factory");
+    if (factory === "0x") {
+      return "0x";
+    }
+    if (factory.length !== 42) {
+      throw new BundlerRpcError(RPC_INVALID_PARAMS, "factory must be a 20-byte address", {
+        reason: "factory_invalid_length",
+      });
+    }
+    const factoryData = parseHexField(input.factoryData, "factoryData", true);
+    // Pack: factory (20 bytes) || factoryData
+    return `${factory}${factoryData.slice(2)}` as HexString;
+  }
+
+  if (hasInitCode) {
+    return parseHexField(input.initCode, "initCode");
+  }
+
+  // No factory and no initCode — existing account
+  return "0x";
+};
+
 const parsePositiveIntegerWithFallback = (value: string | undefined, fallback: number): number => {
   if (value === undefined) {
     return fallback;
@@ -504,8 +545,6 @@ const resolveChainById = (chainId: number): Chain | undefined => {
   switch (chainId) {
     case 167000:
       return taiko;
-    case 167009:
-      return taikoHekla;
     case 167013:
       return taikoHoodi;
     default:
@@ -1629,10 +1668,14 @@ export class BundlerService {
       );
     }
 
+    // ERC-4337 v0.7 RPC format uses separate factory/factoryData fields.
+    // Also accept the legacy packed initCode for backwards compatibility.
+    const initCode = resolveInitCode(userOperationInput);
+
     const userOperation: UserOperation = {
       sender,
       nonce: parseHexField(userOperationInput.nonce, "nonce"),
-      initCode: parseHexField(userOperationInput.initCode, "initCode"),
+      initCode,
       callData: parseHexField(userOperationInput.callData, "callData"),
       maxFeePerGas: parseHexField(userOperationInput.maxFeePerGas, "maxFeePerGas"),
       maxPriorityFeePerGas: parseHexField(

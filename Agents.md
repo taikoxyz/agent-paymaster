@@ -102,7 +102,6 @@ Contract deployment env vars/scripts:
 
 - `DEPLOYER_PRIVATE_KEY` — required by `forge script` deployments
 - `ENTRYPOINT_ADDRESS` — EntryPoint used by paymaster/factory deploy scripts
-- `TAIKO_HEKLA_RPC_URL` — RPC endpoint for Hekla deploy scripts (`deploy:taiko-hekla`, `deploy:factory:taiko-hekla`)
 
 ## Tech Stack
 
@@ -192,8 +191,7 @@ Vercel should use standard deployment protection (`prod_deployment_urls_and_all_
 
 ## Networks
 
-| Name                    | Chain ID | Status     |
-| ----------------------- | -------- | ---------- |
-| Taiko Alethia (mainnet) | 167000   | Production |
-| Taiko Hoodi             | 167013   | Testnet    |
-| Taiko Hekla             | 167009   | Testnet    |
+| Name                    | Chain ID | Status           |
+| ----------------------- | -------- | ---------------- |
+| Taiko Alethia (mainnet) | 167000   | Production       |
+| Taiko Hoodi             | 167013   | Not yet deployed |

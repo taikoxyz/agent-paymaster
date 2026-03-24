@@ -237,7 +237,6 @@ describe.runIf(runE2E)("E2E: Anvil cold-start", () => {
           supportedEntryPoints: [fixture.entryPoint],
           tokenAddresses: {
             taikoMainnet: fixture.usdc,
-            taikoHekla: fixture.usdc,
             taikoHoodi: fixture.usdc,
           },
         },

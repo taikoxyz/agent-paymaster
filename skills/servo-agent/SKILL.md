@@ -44,7 +44,7 @@ The agent has a private key and USDC but no smart account. The account address i
 Call the factory's `getAddress(owner, salt)` view function. This is a pure read — no transaction needed.
 
 ```typescript
-import { createPublicClient, http, parseAbi } from "viem";
+import { createPublicClient, http, parseAbi, encodeFunctionData } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 const owner = privateKeyToAccount("0x<agent-private-key>");
@@ -52,7 +52,11 @@ const publicClient = createPublicClient({
   transport: http("https://rpc.mainnet.taiko.xyz"),
 });
 
+const SERVO_RPC = "https://api-production-cdfe.up.railway.app/rpc";
+const ENTRY_POINT = "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
 const FACTORY = "0xCa245Ae9B786EF420Dc359430e5833b840880619";
+const USDC = "0x07d83526730c7438048D55A4fc0b850e2aaB6f0b";
+
 const factoryAbi = parseAbi([
   "function getAddress(address owner, uint256 salt) view returns (address)",
   "function createAccount(address owner, uint256 salt) returns (address)",
@@ -71,22 +75,20 @@ const accountAddress = await publicClient.readContract({
 
 Transfer USDC to the derived address. The account contract doesn't exist yet — that's fine. ERC-20 balances are stored in the USDC contract keyed by address, so the funds will be there when the account deploys.
 
-### Step 3 — Build initCode (first UserOp only)
+### Step 3 — Prepare factory fields (first UserOp only)
 
-The `initCode` tells the EntryPoint to deploy the account via the factory. After the first UserOp, set `initCode` to `"0x"`.
+For the first UserOp, pass `factory` and `factoryData` so the EntryPoint deploys the account. After the first UserOp, omit these fields (or set them to `undefined`).
 
 ```typescript
-import { encodeFunctionData, concat } from "viem";
+// First UserOp — include factory fields:
+const factory = FACTORY;
+const factoryData = encodeFunctionData({
+  abi: factoryAbi,
+  functionName: "createAccount",
+  args: [owner.address, 0n],
+});
 
-const initCode = concat([
-  FACTORY,
-  encodeFunctionData({
-    abi: factoryAbi,
-    functionName: "createAccount",
-    args: [owner.address, 0n],
-  }),
-]);
-// For subsequent UserOps: initCode = "0x"
+// Subsequent UserOps — omit factory/factoryData entirely
 ```
 
 ### Step 4 — Encode your call
@@ -118,14 +120,24 @@ const batchCallData = encodeFunctionData({
 });
 ```
 
-### Step 5 — Get a paymaster quote (stub)
+### Step 5 — Fetch gas price guidance + paymaster quote (stub)
 
-Call `pm_getPaymasterStubData` to learn the USDC cost. No permit needed yet.
+Taiko has very low gas prices (~0.02 gwei). Do NOT hardcode gas prices — fetch them from Servo.
+
+Call `GET /capabilities` to get `gasPriceGuidance`, then use `suggestedMaxFeePerGas` and `suggestedMaxPriorityFeePerGas` when requesting a quote. This ensures the USDC ceiling reflects actual Taiko gas costs (typically < 0.10 USDC for a cold-start deployment) rather than an inflated guess (which can exceed 20 USDC at 10 gwei).
 
 ```typescript
-const SERVO_RPC = "https://api-production-cdfe.up.railway.app/rpc";
-const ENTRY_POINT = "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
+// 5a — Fetch current gas prices from Servo
+const capsResponse = await fetch(
+  "https://api-production-cdfe.up.railway.app/capabilities",
+);
+const caps = await capsResponse.json();
+const gasGuidance = caps.gasPriceGuidance;
+// gasGuidance.suggestedMaxFeePerGas     — e.g. "0x11a5536" (~0.02 gwei)
+// gasGuidance.suggestedMaxPriorityFeePerGas — e.g. "0xf4240" (~0.001 gwei)
+// gasGuidance.baseFeePerGas             — e.g. "0x85897b" (~0.009 gwei)
 
+// 5b — Request a stub quote using the suggested gas prices
 const stubResponse = await fetch(SERVO_RPC, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
@@ -137,10 +149,11 @@ const stubResponse = await fetch(SERVO_RPC, {
       {
         sender: accountAddress,
         nonce: "0x0",
-        initCode,
+        factory,       // v0.7 separate field
+        factoryData,   // v0.7 separate field
         callData,
-        maxFeePerGas: "0x2540be400", // 10 gwei
-        maxPriorityFeePerGas: "0x3b9aca00", // 1 gwei
+        maxFeePerGas: gasGuidance.suggestedMaxFeePerGas,
+        maxPriorityFeePerGas: gasGuidance.suggestedMaxPriorityFeePerGas,
         signature: "0x",
       },
       ENTRY_POINT,
@@ -149,9 +162,10 @@ const stubResponse = await fetch(SERVO_RPC, {
   }),
 });
 const stub = (await stubResponse.json()).result;
-// stub.maxTokenCost = "0.042000" (human-readable USDC)
-// stub.maxTokenCostMicros = "42000" (use this for permit signing)
+// stub.maxTokenCost = "0.050000" (human-readable USDC — realistic at correct gas price)
+// stub.maxTokenCostMicros = "50000" (use this for permit signing)
 // stub.validUntil = 1710000090 (unix timestamp — quote expires in ~90s)
+// stub.gasPriceGuidance is also available here if you skip the capabilities call
 ```
 
 ### Step 6 — Sign USDC permit (ERC-2612)
@@ -159,8 +173,6 @@ const stub = (await stubResponse.json()).result;
 The agent signs a permit authorizing the paymaster to pull USDC from the smart account. The `owner` in the permit is the **smart account address**, not the EOA — the EOA just provides the signature. The paymaster contract calls `isValidSignature()` (ERC-1271) on the smart account to verify.
 
 ```typescript
-const USDC = "0x07d83526730c7438048D55A4fc0b850e2aaB6f0b";
-
 // Read the USDC permit nonce (0n for brand-new accounts)
 const permitNonce = await publicClient.readContract({
   address: USDC,
@@ -198,6 +210,8 @@ const permitSignature = await owner.signTypedData({
 
 ### Step 7 — Get final quote with permit
 
+Use the same `maxFeePerGas` from Step 5 — the quote must be priced consistently.
+
 ```typescript
 const finalResponse = await fetch(SERVO_RPC, {
   method: "POST",
@@ -210,10 +224,11 @@ const finalResponse = await fetch(SERVO_RPC, {
       {
         sender: accountAddress,
         nonce: "0x0",
-        initCode,
+        factory,
+        factoryData,
         callData,
-        maxFeePerGas: "0x2540be400",
-        maxPriorityFeePerGas: "0x3b9aca00",
+        maxFeePerGas: gasGuidance.suggestedMaxFeePerGas,
+        maxPriorityFeePerGas: gasGuidance.suggestedMaxPriorityFeePerGas,
         signature: "0x",
       },
       ENTRY_POINT,
@@ -238,22 +253,22 @@ const quote = (await finalResponse.json()).result;
 ```typescript
 import { getUserOperationHash } from "viem/account-abstraction";
 
+// viem uses the v0.7 unpacked format for hash computation
+const maxFeePerGas = BigInt(gasGuidance.suggestedMaxFeePerGas);
+const maxPriorityFeePerGas = BigInt(gasGuidance.suggestedMaxPriorityFeePerGas);
+
 const userOpHash = getUserOperationHash({
   userOperation: {
     sender: accountAddress,
     nonce: 0n,
     factory: FACTORY,
-    factoryData: encodeFunctionData({
-      abi: factoryAbi,
-      functionName: "createAccount",
-      args: [owner.address, 0n],
-    }),
+    factoryData,
     callData,
     callGasLimit: BigInt(quote.callGasLimit),
     verificationGasLimit: BigInt(quote.verificationGasLimit),
     preVerificationGas: BigInt(quote.preVerificationGas),
-    maxFeePerGas: 10_000_000_000n,
-    maxPriorityFeePerGas: 1_000_000_000n,
+    maxFeePerGas,
+    maxPriorityFeePerGas,
     paymaster: quote.paymaster,
     paymasterData: quote.paymasterData,
     paymasterVerificationGasLimit: BigInt(quote.paymasterVerificationGasLimit),
@@ -267,7 +282,7 @@ const userOpHash = getUserOperationHash({
 
 const signature = await owner.signMessage({ message: { raw: userOpHash } });
 
-// Submit with v0.7 packed format
+// Submit — Servo accepts v0.7 fields (factory/factoryData, unpacked gas fields)
 const sendResponse = await fetch(SERVO_RPC, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
@@ -279,13 +294,14 @@ const sendResponse = await fetch(SERVO_RPC, {
       {
         sender: accountAddress,
         nonce: "0x0",
-        initCode,
+        factory,
+        factoryData,
         callData,
-        accountGasLimits:
-          quote.accountGasLimits ??
-          packGasLimits(BigInt(quote.verificationGasLimit), BigInt(quote.callGasLimit)),
+        callGasLimit: quote.callGasLimit,
+        verificationGasLimit: quote.verificationGasLimit,
         preVerificationGas: quote.preVerificationGas,
-        gasFees: quote.gasFees ?? packGasLimits(1_000_000_000n, 10_000_000_000n),
+        maxFeePerGas: gasGuidance.suggestedMaxFeePerGas,
+        maxPriorityFeePerGas: gasGuidance.suggestedMaxPriorityFeePerGas,
         paymasterAndData: quote.paymasterAndData,
         signature,
       },
@@ -294,11 +310,6 @@ const sendResponse = await fetch(SERVO_RPC, {
   }),
 });
 const opHash = (await sendResponse.json()).result;
-
-// Helper: pack two uint128s into a bytes32
-function packGasLimits(a: bigint, b: bigint): string {
-  return "0x" + a.toString(16).padStart(32, "0") + b.toString(16).padStart(32, "0");
-}
 ```
 
 ### Step 9 — Poll for receipt
@@ -323,7 +334,7 @@ const checkReceipt = async (hash: string) => {
 
 ## Flow B: Existing 4337 Account
 
-If you already have a deployed 4337 account (ServoAccount, Safe, Kernel, etc.), skip Steps 1-3. Set `initCode: "0x"` and use your account's own `callData` encoding. The rest of the flow (Steps 5-9) is the same.
+If you already have a deployed 4337 account (ServoAccount, Safe, Kernel, etc.), skip Steps 1-3. Omit `factory`/`factoryData` and use your account's own `callData` encoding. The rest of the flow (Steps 5-9) is the same.
 
 **For non-ServoAccount wallets**: encode `callData` using your account's native interface (e.g., Safe's `executeUserOp`, Kernel's `execute`). The paymaster doesn't care which account implementation you use.
 
@@ -340,7 +351,7 @@ All methods go to `POST https://api-production-cdfe.up.railway.app/rpc`
 | `pm_getPaymasterStubData`     | Estimate gas + USDC cost (no permit needed)                             |
 | `pm_getPaymasterData`         | Get signed paymaster fields (pass permit in 4th param `context.permit`) |
 | `pm_supportedEntryPoints`     | List supported entry points                                             |
-| `pm_getCapabilities`          | Supported chains, tokens, factory address                               |
+| `pm_getCapabilities`          | Supported chains, tokens, factory address, gas price guidance           |
 | `eth_sendUserOperation`       | Submit signed UserOp to bundler                                         |
 | `eth_getUserOperationReceipt` | Check if UserOp was included                                            |
 | `eth_getUserOperationByHash`  | Lookup UserOp by hash                                                   |
@@ -361,10 +372,16 @@ All methods go to `POST https://api-production-cdfe.up.railway.app/rpc`
   "quoteId": "f1a2b3...",
   "token": "USDC",
   "tokenAddress": "0x07d83526730c7438048D55A4fc0b850e2aaB6f0b",
-  "maxTokenCost": "0.042000",
-  "maxTokenCostMicros": "42000",
+  "maxTokenCost": "0.050000",
+  "maxTokenCostMicros": "50000",
   "validUntil": 1710000090,
-  "isStub": true
+  "isStub": true,
+  "gasPriceGuidance": {
+    "baseFeePerGas": "0x85897b",
+    "suggestedMaxFeePerGas": "0x11a5536",
+    "suggestedMaxPriorityFeePerGas": "0xf4240",
+    "fetchedAt": "2026-03-24T01:18:31.211Z"
+  }
 }
 ```
 
@@ -372,17 +389,21 @@ All methods go to `POST https://api-production-cdfe.up.railway.app/rpc`
 
 ## Pitfalls — Read Before You Build
 
+**Always fetch gas prices from Servo.** Taiko gas prices are ~0.02 gwei — 500× lower than Ethereum L1. Hardcoding even 1 gwei will inflate your USDC quote by 50×. Call `GET /capabilities` to read `gasPriceGuidance.suggestedMaxFeePerGas` and use it as your `maxFeePerGas`. The USDC ceiling is computed as `totalGas × maxFeePerGas × ETH/USD rate`, so an accurate gas price is essential for a reasonable quote.
+
+**Use v0.7 field names.** Send `factory` and `factoryData` as separate fields — not the legacy packed `initCode`. Servo accepts both, but v0.7 separate fields are the ERC-4337 standard. For existing accounts (no deployment), simply omit `factory`/`factoryData`.
+
 **Quote TTL is 90 seconds.** Get the quote, sign the permit, sign the UserOp, and submit — all within 90s. Don't hold quotes across long reasoning chains. If your agent is slow, separate "deciding what to do" from "executing the Servo flow" — decide first, then run steps 5-8 without pauses.
 
 **Permit owner ≠ EOA.** The `owner` in the USDC permit is the **smart account** address, not the private key's EOA address. The EOA _signs_ the permit, but the permit says "the smart account authorizes the paymaster to pull its USDC." This is the #1 source of integration bugs.
 
 **Stub → Final is two steps.** You must call `pm_getPaymasterStubData` first to learn the USDC cost, then sign a permit for that amount, then call `pm_getPaymasterData` with the permit. You can't skip the stub because you need the cost before you can sign the permit.
 
-**USDC has 6 decimals.** `maxTokenCostMicros: "42000"` = 0.042 USDC. Use `maxTokenCostMicros` for permit signing, `maxTokenCost` for display.
+**USDC has 6 decimals.** `maxTokenCostMicros: "50000"` = 0.050 USDC. Use `maxTokenCostMicros` for permit signing, `maxTokenCost` for display.
 
 **Counterfactual addresses are real.** You can send USDC to a derived address before the account exists on-chain. CREATE2 guarantees it always deploys to that address.
 
-**v0.7 packed format.** Servo uses ERC-4337 v0.7. The `eth_sendUserOperation` expects packed fields (`accountGasLimits`, `gasFees` as bytes32 = two packed uint128s). The `pm_*` responses return individual fields — pack them for submission.
+**Use the same maxFeePerGas in all calls.** The stub, final, and submission must use the same `maxFeePerGas`. The USDC quote is priced based on it, and the permit amount must cover the quoted cost. Changing the gas price between calls will cause the permit to be too small or too large.
 
 **5% surcharge is included.** The `maxTokenCost` in the quote already includes the surcharge.
 

@@ -505,6 +505,73 @@ describe("BundlerService", () => {
     expect(estimate.preVerificationGas).toBe("0x5210");
   });
 
+  it("accepts v0.7 factory/factoryData fields", async () => {
+    const factory = "0xCa245Ae9B786EF420Dc359430e5833b840880619";
+    const factoryData = "0xabcdef";
+    const estimate = await service.estimateUserOperationGas(
+      {
+        sender: "0x1111111111111111111111111111111111111111",
+        nonce: "0x1",
+        factory,
+        factoryData,
+        callData: "0x1234",
+        maxFeePerGas: "0x100",
+        maxPriorityFeePerGas: "0x10",
+        signature: "0x99",
+      } as unknown as UserOperation,
+      ENTRY_POINT_V07,
+    );
+
+    // callData(2 bytes) × 4 + initCode(23 bytes) × 8 + base(120000) + deploy(500000)
+    // = 8 + 184 + 120000 + 500000 = 620192 = 0x976a0
+    expect(estimate.verificationGasLimit).toBe("0x976a0");
+  });
+
+  it("accepts legacy initCode field", async () => {
+    const estimate = await service.estimateUserOperationGas(
+      buildUserOperation({ initCode: "0x1234" }),
+      ENTRY_POINT_V07,
+    );
+
+    // Same behavior as before — initCode triggers deploy gas floor
+    expect(estimate.verificationGasLimit).toBe("0x975f8");
+  });
+
+  it("defaults to 0x when neither initCode nor factory is provided", async () => {
+    const estimate = await service.estimateUserOperationGas(
+      {
+        sender: "0x1111111111111111111111111111111111111111",
+        nonce: "0x1",
+        callData: "0x1234",
+        maxFeePerGas: "0x100",
+        maxPriorityFeePerGas: "0x10",
+        signature: "0x99",
+      } as unknown as UserOperation,
+      ENTRY_POINT_V07,
+    );
+
+    // No initCode — no deploy gas floor
+    expect(estimate.verificationGasLimit).toBe("0x1d4c8");
+  });
+
+  it("rejects when both initCode and factory are provided", async () => {
+    await expect(
+      service.estimateUserOperationGas(
+        {
+          sender: "0x1111111111111111111111111111111111111111",
+          nonce: "0x1",
+          initCode: "0x1234",
+          factory: "0xCa245Ae9B786EF420Dc359430e5833b840880619",
+          callData: "0x1234",
+          maxFeePerGas: "0x100",
+          maxPriorityFeePerGas: "0x10",
+          signature: "0x99",
+        } as unknown as UserOperation,
+        ENTRY_POINT_V07,
+      ),
+    ).rejects.toThrow("Provide either initCode or factory/factoryData, not both");
+  });
+
   it("stores pending user operations and resolves lookups", async () => {
     const userOpHash = await service.sendUserOperation(buildUserOperation(), ENTRY_POINT_V07);
     const lookup = service.getUserOperationByHash(userOpHash);
@@ -617,7 +684,7 @@ describe("BundlerService", () => {
       service.sendUserOperation(
         {
           ...buildUserOperation(),
-          chainId: 167009,
+          chainId: 999999,
         },
         ENTRY_POINT_V07,
       ),

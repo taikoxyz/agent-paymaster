@@ -85,7 +85,6 @@ function createTestStack(options?: {
         paymasterAddress: TEST_PAYMASTER_ADDRESS,
         tokenAddresses: {
           taikoMainnet: TEST_TOKEN_ADDRESS,
-          taikoHekla: TEST_TOKEN_ADDRESS,
           taikoHoodi: TEST_TOKEN_ADDRESS,
         },
       },
@@ -307,11 +306,11 @@ describe("integration: full UserOp lifecycle", () => {
 // ============================================================================
 
 describe("scenario: happy path with all Taiko chains", () => {
-  it("generates valid paymaster data for taikoMainnet, taikoHekla, and taikoHoodi", async () => {
+  it("generates valid paymaster data for taikoMainnet and taikoHoodi", async () => {
     const stack = createTestStack();
     const userOp = makeUserOp();
 
-    for (const chain of ["taikoMainnet", "taikoHekla", "taikoHoodi"] as const) {
+    for (const chain of ["taikoMainnet", "taikoHoodi"] as const) {
       const data = await getPaymasterData(stack.app, userOp, ENTRY_POINT_V07, chain);
       expect(data.token).toBe("USDC");
       expect(data.paymasterAndData).toMatch(/^0x/);

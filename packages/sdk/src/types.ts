@@ -1,6 +1,6 @@
 import type { Address, Hex } from "viem";
 
-export type ChainName = "taikoMainnet" | "taikoHekla" | "taikoHoodi";
+export type ChainName = "taikoMainnet" | "taikoHoodi";
 
 export interface ServoCall {
   target: Address;

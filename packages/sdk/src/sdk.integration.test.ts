@@ -5,7 +5,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { ServoClient } from "./client.js";
 import { createAndExecute } from "./flow.js";
 
-const runLive = process.env.RUN_HEKLA_INTEGRATION === "1";
+const runLive = process.env.RUN_LIVE_INTEGRATION === "1";
 
 const required = [
   "SDK_TEST_RPC_URL",
@@ -61,7 +61,7 @@ describe.runIf(runLive && missing.length === 0)("sdk integration (live)", () => 
 });
 
 describe("sdk integration (live)", () => {
-  it("is skipped unless RUN_HEKLA_INTEGRATION=1 and required env vars are present", () => {
+  it("is skipped unless RUN_LIVE_INTEGRATION=1 and required env vars are present", () => {
     if (runLive && missing.length > 0) {
       throw new Error(`Missing integration env vars: ${missing.join(", ")}`);
     }

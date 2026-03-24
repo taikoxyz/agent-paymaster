@@ -143,11 +143,6 @@ const resolveConfig = (environment: NodeJS.ProcessEnv = process.env): ApiConfig 
     tokenAddresses.taikoMainnet = mainnetToken;
   }
 
-  const heklaToken = parseOptionalAddress(environment.USDC_HEKLA_ADDRESS);
-  if (heklaToken !== undefined) {
-    tokenAddresses.taikoHekla = heklaToken;
-  }
-
   const hoodiToken = parseOptionalAddress(environment.USDC_HOODI_ADDRESS);
   if (hoodiToken !== undefined) {
     tokenAddresses.taikoHoodi = hoodiToken;
@@ -242,7 +237,6 @@ export const validateConfig = (environment: NodeJS.ProcessEnv = process.env): vo
   const errors: string[] = [];
   const configuredTokenAddresses = [
     ["USDC_MAINNET_ADDRESS", environment.USDC_MAINNET_ADDRESS],
-    ["USDC_HEKLA_ADDRESS", environment.USDC_HEKLA_ADDRESS],
     ["USDC_HOODI_ADDRESS", environment.USDC_HOODI_ADDRESS],
   ];
   const configuredOracleAddresses = [
@@ -678,10 +672,6 @@ const mergeConfig = (base: ApiConfig, override: Partial<ApiConfig> | undefined):
 
   if (mergedTokenAddresses.taikoMainnet === undefined) {
     delete mergedTokenAddresses.taikoMainnet;
-  }
-
-  if (mergedTokenAddresses.taikoHekla === undefined) {
-    delete mergedTokenAddresses.taikoHekla;
   }
 
   if (mergedTokenAddresses.taikoHoodi === undefined) {

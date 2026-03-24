@@ -153,7 +153,6 @@ const createTestApp = (
         accountFactoryAddress: TEST_FACTORY_ADDRESS,
         tokenAddresses: {
           taikoMainnet: TEST_TOKEN_ADDRESS,
-          taikoHekla: TEST_TOKEN_ADDRESS,
           taikoHoodi: TEST_TOKEN_ADDRESS,
         },
       },
@@ -387,7 +386,6 @@ describe("api gateway", () => {
         symbol: "USDC",
         addresses: {
           taikoMainnet: TEST_TOKEN_ADDRESS,
-          taikoHekla: TEST_TOKEN_ADDRESS,
           taikoHoodi: TEST_TOKEN_ADDRESS,
         },
       },
@@ -851,7 +849,7 @@ describe("api gateway", () => {
     expect(payload.result.paymasterAndData).toMatch(/^0x/);
   });
 
-  it("resolves hex chain ID for taikoHekla (0x28c61)", async () => {
+  it("resolves hex chain ID for taikoHoodi (0x28c65)", async () => {
     const bundlerClient = new FakeBundlerClient();
     const app = createTestApp(bundlerClient);
 
@@ -864,7 +862,7 @@ describe("api gateway", () => {
         jsonrpc: "2.0",
         id: 21,
         method: "pm_getPaymasterData",
-        params: [SAMPLE_USER_OPERATION, ENTRY_POINT_V07, "0x28c61"],
+        params: [SAMPLE_USER_OPERATION, ENTRY_POINT_V07, "0x28c65"],
       }),
     });
 
