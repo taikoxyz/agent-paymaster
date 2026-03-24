@@ -36,7 +36,7 @@ packages/
 ## Architecture (How It Works)
 
 1. Agent builds a partial UserOp with USDC but no ETH
-2. `pm_getPaymasterData` via `POST /rpc` → API asks bundler for simulation-backed gas limits (heuristic + EntryPoint `simulateValidation` pre-op gas), prices via oracle, returns EIP-712 signed `paymasterAndData`
+2. `pm_getPaymasterData` via `POST /rpc` → API asks bundler for simulation-backed gas limits (heuristic + EntryPoint `simulateValidation` pre-op gas + `eth_estimateGas` call gas), prices via oracle, returns EIP-712 signed `paymasterAndData`
 3. Agent submits full UserOp via `POST /rpc` (`eth_sendUserOperation`)
 4. Bundler queues the UserOp, the submitter loop simulates it, then submits `handleOps` to EntryPoint (and logs estimate-vs-actual drift when finalized)
 5. Contract validates quote signature in `_validatePaymasterUserOp`
