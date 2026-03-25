@@ -41,11 +41,11 @@ The agent holds USDC but no ETH. The entire gas payment happens in USDC through 
 
 **1. Estimate** — The agent calls `pm_getPaymasterStubData` with a draft UserOperation. The API estimates gas via the bundler, and the bundler combines heuristic sizing with EntryPoint `simulateValidation` pre-op gas (against the configured Taiko RPC + EntryPoint). The API then converts the ETH cost to USDC using a composite price oracle (Chainlink primary, Coinbase + Kraken fallback), applies a surcharge (default 5%), and returns a USDC cost estimate.
 
-**2. Quote** — The agent signs an [EIP-2612 USDC permit](https://eips.ethereum.org/EIPS/eip-2612) for the quoted amount and calls `pm_getPaymasterData` with the permit attached. The API returns EIP-712 signed paymaster fields that the agent attaches to the UserOperation.
+**2. Quote** — The agent signs an [EIP-2612 USDC permit](https://eips.ethereum.org/EIPS/eip-2612) for the quoted amount and calls `pm_getPaymasterData` with the permit attached. The API returns EIP-712 signed paymaster fields, including a bounded `validAfter`/`validUntil` window, that the agent attaches to the UserOperation.
 
 **3. Submission** — The agent signs the final UserOperation and submits it via `eth_sendUserOperation`. The bundler validates it, stores it in the mempool, and a background submitter loop simulates and forwards it to `handleOps` on-chain. Finalized operation metadata is persisted so `eth_getUserOperationByHash` / `eth_getUserOperationReceipt` survive restarts, and exact-hash retries are requeued after failed attempts. The bundler pays ETH gas upfront and emits estimate-vs-actual gas drift events when operations finalize.
 
-**4. On-chain settlement** — The EntryPoint calls the paymaster contract, which verifies the quote signature, executes the USDC permit, and locks `maxTokenCost` USDC from the agent. After the agent's transaction executes, the contract settles the actual gas cost in USDC and refunds any surplus back to the agent.
+**4. On-chain settlement** — The EntryPoint calls the paymaster contract, which verifies the quote signature, enforces a bounded quote lifetime, executes the USDC permit, and locks `maxTokenCost` USDC from the agent. The current `validAfter`/`validUntil` window is enforced by EntryPoint and bundlers via the paymaster's returned `validationData`. After the agent's transaction executes, the contract settles the actual gas cost in USDC and refunds any surplus back to the agent.
 
 > **Why does the paymaster hold ETH?** The EntryPoint requires paymasters to maintain an ETH deposit to reimburse bundlers for gas. The paymaster converts between USDC (what agents pay) and ETH (what the network charges).
 

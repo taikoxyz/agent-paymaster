@@ -39,7 +39,7 @@ packages/
 2. `pm_getPaymasterData` via `POST /rpc` → API asks bundler for simulation-backed gas limits (heuristic + EntryPoint `simulateValidation` pre-op gas), prices via oracle, returns EIP-712 signed `paymasterAndData`
 3. Agent submits full UserOp via `POST /rpc` (`eth_sendUserOperation`)
 4. Bundler queues the UserOp, the submitter loop simulates it, then submits `handleOps` to EntryPoint (and logs estimate-vs-actual drift when finalized)
-5. Contract validates quote signature in `_validatePaymasterUserOp`
+5. Contract validates quote signature and bounded quote lifetime in `_validatePaymasterUserOp`, then returns `validationData` so EntryPoint/bundlers enforce the signed `validAfter`/`validUntil` window
 6. UserOp executes
 7. Contract settles actual USDC cost in `_postOp`, refunds surplus
 
@@ -164,7 +164,7 @@ Railway config: `railway.api.json` and `railway.bundler.json` are the in-repo se
 - **Submodules**: contract tests fail without submodules. Use `git submodule update --init --recursive` if you didn't clone with `--recurse-submodules`.
 - **SQLite WAL**: the bundler and API share a SQLite volume. Don't delete `./data/` while services are running.
 - **Bundler read-only mode**: if `BUNDLER_SUBMITTER_PRIVATE_KEY` is unset, the bundler rejects `eth_sendUserOperation` instead of accepting UserOps it cannot submit.
-- **Quote TTL**: quotes expire (default 90s). Tests that hold quotes too long will fail on-chain.
+- **Quote TTL**: the contract enforces `validUntil - validAfter <= maxQuoteTtlSeconds` (default 90s), while EntryPoint/bundlers enforce whether the quote is currently inside that signed validity window.
 - **Packed format**: ERC-4337 v0.7 uses packed UserOp format. Don't confuse with v0.6 struct layout.
 - **Docker**: two separate Dockerfiles — `Dockerfile` (API) and `Dockerfile.bundler`. Both expose `/health`.
 
