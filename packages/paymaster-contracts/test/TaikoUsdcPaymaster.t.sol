@@ -308,7 +308,7 @@ contract TaikoUsdcPaymasterTest is Test {
         entryPoint.callPostOp(paymaster, IPaymaster.PostOpMode.opSucceeded, context, 0.0004 ether, 1);
     }
 
-    function test_pullsAdditionalUsdcOnShortfall() public {
+    function test_capsChargesAtPrefundOnOpSucceededShortfall() public {
         uint256 maxTokenCost = 1_000_000;
 
         vm.prank(sender);
@@ -319,14 +319,16 @@ contract TaikoUsdcPaymasterTest is Test {
         (bytes memory context,) =
             entryPoint.callValidatePaymaster(paymaster, userOp, USER_OP_HASH, 0.001 ether);
 
+        // Actual cost (2M) exceeds prefund (1M). Paymaster caps at prefund — no additional pull.
         vm.expectEmit(true, true, true, true);
         emit TaikoUsdcPaymaster.UserOperationSponsored(
-            address(usdc), sender, USER_OP_HASH, 1_000_000, 2_000_000, 2_000_000, 0
+            address(usdc), sender, USER_OP_HASH, 1_000_000, 2_000_000, 1_000_000, 0
         );
 
         entryPoint.callPostOp(paymaster, IPaymaster.PostOpMode.opSucceeded, context, 2 ether, 0);
 
-        assertEq(usdc.balanceOf(address(paymaster)), 2_000_000);
+        assertEq(usdc.balanceOf(address(paymaster)), 1_000_000);
+        assertEq(paymaster.lockedUsdcPrefund(), 0);
     }
 
     function test_capsChargesAtPrefundOnOpReverted() public {
@@ -454,6 +456,53 @@ contract TaikoUsdcPaymasterTest is Test {
             _buildUserOp(sender, hex"bb22", maxTokenCost, 120_000, 0, 1_001, _emptyPermit());
 
         vm.expectRevert(TaikoUsdcPaymaster.InvalidBps.selector);
+        entryPoint.callValidatePaymaster(paymaster, userOp, USER_OP_HASH, 0.001 ether);
+    }
+
+    function test_acceptsFutureDatedQuoteWithinMaxTtl() public {
+        uint256 maxTokenCost = 3_000_000;
+
+        vm.prank(sender);
+        usdc.approve(address(paymaster), maxTokenCost);
+
+        (PackedUserOperation memory userOp, QuoteData memory quote) =
+            _buildUserOp(sender, hex"cc44", maxTokenCost, 120_000, 0, 0, _emptyPermit());
+
+        quote.validAfter += 1_000;
+        quote.validUntil = quote.validAfter + 90;
+
+        bytes memory paymasterData = abi.encode(quote, _signQuote(userOp, quote), _emptyPermit());
+        userOp.paymasterAndData = abi.encodePacked(
+            address(paymaster),
+            DEFAULT_PAYMASTER_VALIDATION_GAS,
+            DEFAULT_PAYMASTER_POSTOP_GAS,
+            paymasterData
+        );
+
+        entryPoint.callValidatePaymaster(paymaster, userOp, USER_OP_HASH, 0.001 ether);
+    }
+
+    function test_rejectsFutureDatedQuoteExceedingMaxTtl() public {
+        uint256 maxTokenCost = 3_000_000;
+
+        vm.prank(sender);
+        usdc.approve(address(paymaster), maxTokenCost);
+
+        (PackedUserOperation memory userOp, QuoteData memory quote) =
+            _buildUserOp(sender, hex"dd55", maxTokenCost, 120_000, 0, 0, _emptyPermit());
+
+        quote.validAfter += 1_000;
+        quote.validUntil = quote.validAfter + 121;
+
+        bytes memory paymasterData = abi.encode(quote, _signQuote(userOp, quote), _emptyPermit());
+        userOp.paymasterAndData = abi.encodePacked(
+            address(paymaster),
+            DEFAULT_PAYMASTER_VALIDATION_GAS,
+            DEFAULT_PAYMASTER_POSTOP_GAS,
+            paymasterData
+        );
+
+        vm.expectRevert(TaikoUsdcPaymaster.QuoteTtlTooLong.selector);
         entryPoint.callValidatePaymaster(paymaster, userOp, USER_OP_HASH, 0.001 ether);
     }
 
@@ -604,5 +653,83 @@ contract TaikoUsdcPaymasterTest is Test {
 
         assertEq(usdc.balanceOf(address(paymaster)), maxTokenCost);
         assertEq(usdc.nonces(address(wallet)), 1);
+    }
+
+    // ---------------------------------------------------------------
+    // Regression: audit findings #1 and #2
+    // ---------------------------------------------------------------
+
+    function test_lockedPrefundDecrementsWhenRefundFails() public {
+        uint256 maxTokenCost = 3_000_000;
+
+        vm.prank(sender);
+        usdc.approve(address(paymaster), maxTokenCost);
+
+        (PackedUserOperation memory userOp,) = _buildUserOpSimple(sender, hex"dead01", maxTokenCost);
+
+        (bytes memory context,) =
+            entryPoint.callValidatePaymaster(paymaster, userOp, USER_OP_HASH, 0.001 ether);
+
+        assertEq(paymaster.lockedUsdcPrefund(), maxTokenCost);
+
+        // Block transfers to the sender (simulates USDC blacklist).
+        usdc.setTransferBlocked(sender, true);
+
+        // PostOp should NOT revert — the refund fails silently and the lock is released.
+        entryPoint.callPostOp(paymaster, IPaymaster.PostOpMode.opSucceeded, context, 0.0004 ether, 0);
+
+        assertEq(paymaster.lockedUsdcPrefund(), 0, "lock must be released even when refund fails");
+        // Paymaster retains the full prefund since refund could not be delivered.
+        assertEq(usdc.balanceOf(address(paymaster)), maxTokenCost);
+    }
+
+    function test_emitsRefundFailedOnTransferFailure() public {
+        uint256 maxTokenCost = 3_000_000;
+
+        vm.prank(sender);
+        usdc.approve(address(paymaster), maxTokenCost);
+
+        (PackedUserOperation memory userOp,) = _buildUserOpSimple(sender, hex"dead02", maxTokenCost);
+
+        (bytes memory context,) =
+            entryPoint.callValidatePaymaster(paymaster, userOp, USER_OP_HASH, 0.001 ether);
+
+        usdc.setTransferBlocked(sender, true);
+
+        // Expect RefundFailed event with the surplus amount.
+        uint256 expectedRefund = maxTokenCost - 400; // actual cost = 0.0004 ETH × 1e6 rate = 400
+        vm.expectEmit(true, true, false, true);
+        emit TaikoUsdcPaymaster.RefundFailed(sender, USER_OP_HASH, expectedRefund);
+
+        // Expect the settlement event to show zero refund and full prefund retained.
+        vm.expectEmit(true, true, true, true);
+        emit TaikoUsdcPaymaster.UserOperationSponsored(
+            address(usdc), sender, USER_OP_HASH, 1_000_000, 400, maxTokenCost, 0
+        );
+
+        entryPoint.callPostOp(paymaster, IPaymaster.PostOpMode.opSucceeded, context, 0.0004 ether, 0);
+    }
+
+    function test_exactValuePermitDoesNotRevertOnShortfall() public {
+        uint256 maxTokenCost = 1_000_000;
+        uint256 deadline = block.timestamp + 300;
+
+        // Permit for exactly maxTokenCost — no spare allowance.
+        PermitData memory permit = _signPermit(sender, senderKey, maxTokenCost, deadline);
+
+        (PackedUserOperation memory userOp,) =
+            _buildUserOp(sender, hex"dead03", maxTokenCost, 120_000, 0, 0, permit);
+
+        (bytes memory context,) =
+            entryPoint.callValidatePaymaster(paymaster, userOp, USER_OP_HASH, 0.001 ether);
+
+        // Actual cost exceeds prefund. Previously this would revert trying to pull shortfall.
+        // Now it caps at prefund.
+        entryPoint.callPostOp(paymaster, IPaymaster.PostOpMode.opSucceeded, context, 2 ether, 0);
+
+        assertEq(usdc.balanceOf(address(paymaster)), maxTokenCost);
+        assertEq(paymaster.lockedUsdcPrefund(), 0);
+        // Sender's allowance is fully consumed (no leftover from validation pull).
+        assertEq(usdc.allowance(sender, address(paymaster)), 0);
     }
 }

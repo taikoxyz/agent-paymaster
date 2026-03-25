@@ -15,11 +15,16 @@ contract MockERC20Permit is EIP712 {
     mapping(address account => uint256) public balanceOf;
     mapping(address owner => mapping(address spender => uint256)) public allowance;
     mapping(address owner => uint256) public nonces;
+    mapping(address account => bool) public transferBlocked;
 
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
 
     constructor() EIP712(name, "2") {}
+
+    function setTransferBlocked(address account, bool blocked) external {
+        transferBlocked[account] = blocked;
+    }
 
     function mint(address to, uint256 amount) external {
         balanceOf[to] += amount;
@@ -96,6 +101,7 @@ contract MockERC20Permit is EIP712 {
     }
 
     function _transfer(address from, address to, uint256 amount) private {
+        require(!transferBlocked[from] && !transferBlocked[to], "TRANSFER_BLOCKED");
         require(to != address(0), "INVALID_RECIPIENT");
         require(balanceOf[from] >= amount, "INSUFFICIENT_BALANCE");
 

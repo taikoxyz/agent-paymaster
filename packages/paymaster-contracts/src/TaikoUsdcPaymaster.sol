@@ -131,6 +131,13 @@ contract TaikoUsdcPaymaster is BasePaymaster, EIP712 {
         uint256 refundAmount
     );
 
+    /// @notice Emitted when a USDC refund transfer fails during settlement.
+    /// @dev The paymaster retains the unrefunded USDC; the owner can return it manually via `withdrawToken`.
+    /// @param sender Account that should have received the refund.
+    /// @param userOpHash User operation hash for tracing.
+    /// @param amount Refund amount that could not be transferred.
+    event RefundFailed(address indexed sender, bytes32 indexed userOpHash, uint256 amount);
+
     /// @notice Emitted when the quote signer is updated.
     /// @param previousSigner Previous quote signer.
     /// @param newSigner New quote signer. `address(0)` disables sponsorships.
@@ -343,6 +350,11 @@ contract TaikoUsdcPaymaster is BasePaymaster, EIP712 {
     }
 
     /// @dev Settles the final USDC cost after execution and refunds any unused prefund.
+    /// Settlement is capped at the prefund collected during validation — the paymaster never
+    /// pulls additional tokens post-execution. This eliminates the revert path that caused
+    /// fund loss when exact-value permits were fully consumed during validation.
+    /// The lock is released before any external call so that a failed refund transfer
+    /// cannot leave `lockedUsdcPrefund` permanently inflated.
     function _postOp(
         PostOpMode _mode,
         bytes calldata _context,
@@ -355,34 +367,27 @@ contract TaikoUsdcPaymaster is BasePaymaster, EIP712 {
         uint256 actualTokenNeeded =
             _applySurcharge((nativeCostWithOverhead * ctx.exchangeRate) / _WEI_PER_ETH, ctx.surchargeBps);
 
+        // Release the lock BEFORE external calls so that a downstream transfer failure
+        // cannot leave lockedUsdcPrefund permanently inflated.
+        lockedUsdcPrefund -= ctx.prefund;
+
         uint256 feeTokenAmount = ctx.prefund;
         uint256 refundAmount;
 
-        if (_mode == PostOpMode.opSucceeded) {
-            if (actualTokenNeeded < ctx.prefund) {
-                refundAmount = ctx.prefund - actualTokenNeeded;
-                feeTokenAmount = actualTokenNeeded;
+        // Cap settlement at prefund. Both opSucceeded and opReverted refund surplus;
+        // postOpReverted keeps the full prefund as a defensive fallback.
+        if (_mode != PostOpMode.postOpReverted && actualTokenNeeded < ctx.prefund) {
+            refundAmount = ctx.prefund - actualTokenNeeded;
+            feeTokenAmount = actualTokenNeeded;
 
-                if (refundAmount > 0) {
-                    usdc.safeTransfer(ctx.sender, refundAmount);
-                }
-            } else if (actualTokenNeeded > ctx.prefund) {
-                uint256 shortfall = actualTokenNeeded - ctx.prefund;
-                usdc.safeTransferFrom(ctx.sender, address(this), shortfall);
-                feeTokenAmount = ctx.prefund + shortfall;
-            }
-        } else if (_mode == PostOpMode.opReverted) {
-            if (actualTokenNeeded < ctx.prefund) {
-                refundAmount = ctx.prefund - actualTokenNeeded;
-                feeTokenAmount = actualTokenNeeded;
-
-                if (refundAmount > 0) {
-                    usdc.safeTransfer(ctx.sender, refundAmount);
-                }
+            if (refundAmount > 0 && !_transferNoRevert(ctx.sender, refundAmount)) {
+                // Refund transfer failed (e.g. sender is blacklisted). The paymaster retains
+                // the USDC; the owner can return it manually via withdrawToken.
+                feeTokenAmount = ctx.prefund;
+                emit RefundFailed(ctx.sender, ctx.userOpHash, refundAmount);
+                refundAmount = 0;
             }
         }
-
-        lockedUsdcPrefund -= ctx.prefund;
 
         emit UserOperationSponsored(
             address(usdc),
@@ -395,7 +400,7 @@ contract TaikoUsdcPaymaster is BasePaymaster, EIP712 {
         );
     }
 
-    /// @dev Validates quote boundaries and lifetime against local guardrails.
+    /// @dev Validates quote structure and bounded lifetime against local guardrails.
     function _validateQuote(QuoteData memory _quote) internal view {
         if (_quote.token != address(usdc)) {
             revert InvalidQuoteToken();
@@ -409,15 +414,11 @@ contract TaikoUsdcPaymaster is BasePaymaster, EIP712 {
             revert InvalidQuoteMaxTokenCost();
         }
 
-        if (
-            _quote.validAfter > block.timestamp ||
-            _quote.validUntil < block.timestamp ||
-            _quote.validUntil < _quote.validAfter
-        ) {
+        if (_quote.validUntil < _quote.validAfter) {
             revert QuoteExpired();
         }
 
-        if (_quote.validUntil > block.timestamp + maxQuoteTtlSeconds) {
+        if (uint256(_quote.validUntil - _quote.validAfter) > maxQuoteTtlSeconds) {
             revert QuoteTtlTooLong();
         }
 
@@ -452,6 +453,16 @@ contract TaikoUsdcPaymaster is BasePaymaster, EIP712 {
 
         (uint8 v, bytes32 r, bytes32 s) = _splitSignature(_permit.signature);
         try IERC20Permit(address(usdc)).permit(_owner, address(this), _permit.value, _permit.deadline, v, r, s) {} catch {}
+    }
+
+    /// @dev Attempts a USDC transfer without reverting.
+    /// Uses a low-level `call` and inspects the return data, mirroring the SafeERC20 pattern
+    /// but returning a success flag instead of reverting. This keeps `_postOp` non-reverting
+    /// so that `lockedUsdcPrefund` accounting always completes.
+    function _transferNoRevert(address _to, uint256 _amount) internal returns (bool success_) {
+        (bool callSuccess, bytes memory returnData) =
+            address(usdc).call(abi.encodeCall(IERC20.transfer, (_to, _amount)));
+        success_ = callSuccess && (returnData.length == 0 || abi.decode(returnData, (bool)));
     }
 
     /// @dev Hashes the quote and user operation fields covered by the quote signer.
