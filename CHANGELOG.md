@@ -10,6 +10,13 @@ Format:
 
 ## [Unreleased]
 
+## [v0.2.12] - 2026-04-01
+
+### Fixed
+
+- `pm_getPaymasterStubData` now correctly accepts ERC-4337 v0.7 account deployment fields (`factory` + `factoryData`) by normalizing them to packed `initCode` before internal bundler gas estimation, instead of forwarding an ambiguous payload that included both representations.
+- Malformed v0.7 `factory` values are now rejected earlier as `-32602` invalid params, preserving the bundler's 20-byte address validation after API-side normalization.
+
 ## [v0.2.11] - 2026-03-24
 
 ### Changed
@@ -195,7 +202,8 @@ Format:
 
 - Documented the release contract, required GitHub Actions variables and secrets, and the Railway plus Vercel deployment flow in `README.md` and `Agents.md`.
 
-[Unreleased]: https://github.com/ggonzalez94/agent-paymaster/compare/v0.2.5...HEAD
+[Unreleased]: https://github.com/ggonzalez94/agent-paymaster/compare/v0.2.12...HEAD
+[v0.2.12]: https://github.com/ggonzalez94/agent-paymaster/releases/tag/v0.2.12
 [v0.2.5]: https://github.com/ggonzalez94/agent-paymaster/releases/tag/v0.2.5
 [v0.2.4]: https://github.com/ggonzalez94/agent-paymaster/releases/tag/v0.2.4
 [v0.2.3]: https://github.com/ggonzalez94/agent-paymaster/releases/tag/v0.2.3
