@@ -61,6 +61,7 @@ const isValidationError = (error: Error): boolean => {
     message.includes("must be a hex") ||
     message.includes("must be a string") ||
     message.includes("must be an object") ||
+    message.includes("20-byte address") ||
     message.includes("is required") ||
     message.includes("Only USDC is supported") ||
     message.includes("Unsupported chain") ||

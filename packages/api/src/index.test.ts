@@ -135,6 +135,55 @@ class MissingPaymasterGasBundlerClient extends FakeBundlerClient {
   }
 }
 
+class RejectAmbiguousInitCodeBundlerClient extends FakeBundlerClient {
+  async rpc(request: JsonRpcRequest): Promise<JsonRpcResponse> {
+    this.rpcCalls.push(request);
+
+    if (request.method === "eth_estimateUserOperationGas") {
+      const [userOp] = request.params as [Record<string, unknown>, string];
+      const hasInitCode = userOp.initCode !== undefined && userOp.initCode !== null;
+      const hasFactory = userOp.factory !== undefined && userOp.factory !== null;
+
+      if (hasInitCode && hasFactory) {
+        return {
+          jsonrpc: "2.0",
+          id: request.id,
+          error: {
+            code: -32602,
+            message: "Provide either initCode or factory/factoryData, not both",
+          },
+        };
+      }
+
+      return {
+        jsonrpc: "2.0",
+        id: request.id,
+        result: {
+          callGasLimit: "0xd6f8",
+          verificationGasLimit: "0x1d4c8",
+          preVerificationGas: "0x5274",
+          paymasterVerificationGasLimit: "0x1d4c0",
+          paymasterPostOpGasLimit: "0x13880",
+        },
+      };
+    }
+
+    if (request.method === "eth_supportedEntryPoints") {
+      return {
+        jsonrpc: "2.0",
+        id: request.id,
+        result: [ENTRY_POINT_V07],
+      };
+    }
+
+    return {
+      jsonrpc: "2.0",
+      id: request.id,
+      result: { ok: true },
+    };
+  }
+}
+
 const createTestApp = (
   bundlerClient: BundlerClient,
   options: {
@@ -678,6 +727,83 @@ describe("api gateway", () => {
     expect(sentUserOp.initCode).toBe("0x");
     expect(sentUserOp.signature).toBeDefined();
     expect(sentUserOp.signature).not.toBe("0x");
+  });
+
+  it("pm_getPaymasterStubData accepts v0.7 factory/factoryData deployment fields", async () => {
+    const bundlerClient = new RejectAmbiguousInitCodeBundlerClient();
+    const app = createTestApp(bundlerClient);
+    const factoryData = "0xabcdef";
+    const v07UserOp = {
+      sender: SAMPLE_USER_OPERATION.sender,
+      nonce: SAMPLE_USER_OPERATION.nonce,
+      factory: TEST_FACTORY_ADDRESS,
+      factoryData,
+      callData: SAMPLE_USER_OPERATION.callData,
+      maxFeePerGas: SAMPLE_USER_OPERATION.maxFeePerGas,
+      maxPriorityFeePerGas: SAMPLE_USER_OPERATION.maxPriorityFeePerGas,
+    };
+
+    const response = await app.request("/rpc", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 22,
+        method: "pm_getPaymasterStubData",
+        params: [v07UserOp, ENTRY_POINT_V07, "taikoMainnet", {}],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+
+    const payload = await response.json();
+    expect(payload.result.isStub).toBe(true);
+
+    const estimateCall = bundlerClient.rpcCalls.find(
+      (call) => call.method === "eth_estimateUserOperationGas",
+    );
+    const sentUserOp = (estimateCall!.params as unknown[])[0] as Record<string, unknown>;
+    expect(sentUserOp.initCode).toBe(`${TEST_FACTORY_ADDRESS}${factoryData.slice(2)}`);
+    expect(sentUserOp.factory).toBeUndefined();
+    expect(sentUserOp.factoryData).toBeUndefined();
+    expect(sentUserOp.signature).toBeDefined();
+    expect(sentUserOp.signature).not.toBe("0x");
+  });
+
+  it("pm_getPaymasterStubData rejects invalid v0.7 factory length before estimation", async () => {
+    const bundlerClient = new FakeBundlerClient();
+    const app = createTestApp(bundlerClient);
+
+    const response = await app.request("/rpc", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 23,
+        method: "pm_getPaymasterStubData",
+        params: [
+          {
+            sender: SAMPLE_USER_OPERATION.sender,
+            nonce: SAMPLE_USER_OPERATION.nonce,
+            factory: "0x1234",
+            factoryData: "0xabcdef",
+            callData: SAMPLE_USER_OPERATION.callData,
+            maxFeePerGas: SAMPLE_USER_OPERATION.maxFeePerGas,
+            maxPriorityFeePerGas: SAMPLE_USER_OPERATION.maxPriorityFeePerGas,
+          },
+          ENTRY_POINT_V07,
+          "taikoMainnet",
+          {},
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+
+    const payload = await response.json();
+    expect(payload.error.code).toBe(-32602);
+    expect(payload.error.message).toContain("userOperation.factory must be a 20-byte address");
+    expect(bundlerClient.rpcCalls).toHaveLength(0);
   });
 
   it("pm_getPaymasterStubData preserves caller-provided initCode and signature", async () => {
