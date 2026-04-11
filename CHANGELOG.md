@@ -15,8 +15,8 @@ Format:
 - Replaced the hand-rolled `TaikoUsdcPaymaster` contract with a thin `ServoPaymaster` wrapper over Pimlico's audited `SingletonPaymasterV7` (vendored from `pimlicolabs/singleton-paymaster` under `packages/paymaster-contracts/src/pimlico/`). Deletes ~550 lines of custom contract surface in exchange for Pimlico's audited base.
 - Quote signatures now use EIP-191 `personal_sign` over Pimlico's custom UserOp hash instead of EIP-712. Off-chain signer implementations must switch from `signTypedData` to `signMessage`.
 - The 5% Servo surcharge is now baked into the signed `exchangeRate` instead of carrying a separate `surchargeBps` field — Pimlico's ERC-20 mode has no surcharge slot.
-- USDC allowance is no longer bundled into `paymasterData`. The SDK now issues a one-time bootstrap UserOperation whose `callData` runs an EIP-2612 `permit(MAX_UINT256)` against USDC, granting the paymaster unlimited allowance. Subsequent ops reuse that allowance. See `CreateAndExecuteResult.setupUserOperationHash`.
-- `pm_getCapabilities` now returns an `allowance` section (with `standard: "EIP-2612"`, `spender: "paymaster"`, `bootstrap: "setup-userop"`) instead of the old `permit` object.
+- USDC allowance is no longer bundled into `paymasterData`. Fresh accounts now prepend `permit(MAX_UINT256)` to the account `callData` and batch it with the real action in a single UserOperation, so a counterfactual account can be funded, deployed, approved, and used without ever holding ETH.
+- `pm_getCapabilities` now returns an `allowance` section (with `standard: "EIP-2612"`, `spender: "paymaster"`, `bootstrap: "bundled-userop"`) instead of the old `permit` object.
 - The `ServoPaymaster` contract pools USDC on itself (`treasury = address(this)`). A new admin-gated `withdrawToken(token, to, amount)` lets operators sweep accumulated USDC.
 
 ### Removed

@@ -1,4 +1,4 @@
-const codeString = `import { createClient, http } from "viem";
+const codeString = `import { createClient, encodeFunctionData, http, maxUint256, parseAbi } from "viem";
 import { taikoAlethia } from "viem/chains";
 
 const client = createClient({
@@ -6,41 +6,92 @@ const client = createClient({
   transport: http("https://servo.taiko.xyz/rpc"),
 });
 
-// 1. Get stub data to learn the USDC cost
+const accountAbi = parseAbi([
+  "function execute(address,uint256,bytes)",
+  "function executeBatch(address[] targets, uint256[] values, bytes[] calldatas)",
+]);
+const usdcAbi = parseAbi([
+  "function allowance(address owner, address spender) view returns (uint256)",
+  "function nonces(address owner) view returns (uint256)",
+  "function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)",
+]);
+
+const action = encodeFunctionData({
+  abi: targetAbi,
+  functionName: "doThing",
+  args: [123n],
+});
+
+let userOp = {
+  sender,
+  nonce: "0x0",
+  initCode,
+  callData: encodeFunctionData({
+    abi: accountAbi,
+    functionName: "execute",
+    args: [target, 0n, action],
+  }),
+  callGasLimit: "0x0",
+  verificationGasLimit: "0x0",
+  preVerificationGas: "0x0",
+  maxFeePerGas,
+  maxPriorityFeePerGas,
+  signature: DUMMY_SIG,
+};
+
+// 1. Stub quote for the real action. This reveals the paymaster + token + maxTokenCost.
 const stub = await client.request({
   method: "pm_getPaymasterStubData",
-  params: [userOp, entryPoint, "0x28C70", {}],
+  params: [userOp, entryPoint, "taikoMainnet"],
 });
-// stub.maxTokenCost → "2370000" (2.37 USDC)
 
-// 2. Sign an EIP-2612 permit for that cost
-const permit = await walletClient.signTypedData({
-  domain: { name: "USD Coin", version: "2",
-    chainId: 167000,
-    verifyingContract: USDC_ADDRESS },
-  types: { Permit: [
-    { name: "owner", type: "address" },
-    { name: "spender", type: "address" },
-    { name: "value", type: "uint256" },
-    { name: "nonce", type: "uint256" },
-    { name: "deadline", type: "uint256" },
-  ]},
-  primaryType: "Permit",
-  message: {
-    owner: account.address,
+// 2. If the undeployed account has no allowance yet, prepend permit() in the same UserOp.
+const allowance = await publicClient.readContract({
+  address: stub.tokenAddress,
+  abi: usdcAbi,
+  functionName: "allowance",
+  args: [sender, stub.paymaster],
+});
+
+if (allowance < BigInt(stub.maxTokenCostMicros)) {
+  const permit = await signPermitWithViem({
+    owner,
+    token: stub.tokenAddress,
     spender: stub.paymaster,
-    value: BigInt(stub.maxTokenCost),
-    nonce: 0n,
-    deadline: BigInt(stub.validUntil),
-  },
+    value: maxUint256,
+    nonce: await publicClient.readContract({
+      address: stub.tokenAddress,
+      abi: usdcAbi,
+      functionName: "nonces",
+      args: [sender],
+    }),
+  });
+
+  userOp = {
+    ...userOp,
+    callData: encodeFunctionData({
+      abi: accountAbi,
+      functionName: "executeBatch",
+      args: [
+        [stub.tokenAddress, target],
+        [0n, 0n],
+        [permit.calldata, action],
+      ],
+    }),
+  };
+}
+
+// 3. Final quote for the exact UserOp you will submit.
+const quote = await client.request({
+  method: "pm_getPaymasterData",
+  params: [userOp, entryPoint, "taikoMainnet"],
 });
 
-// 3. Get final paymasterData with the permit
-const result = await client.request({
-  method: "pm_getPaymasterData",
-  params: [userOp, entryPoint, "0x28C70", { permit }],
-});
-// result.paymasterData → ready to use`;
+// 4. Sign the final UserOp hash and send it.
+await bundlerClient.sendUserOperation({
+  ...userOp,
+  ...quote,
+});`;
 
 const RPC_ENDPOINT = "https://api-production-cdfe.up.railway.app/rpc";
 
@@ -62,8 +113,9 @@ export function CodeExample() {
             <span className="text-surface-500">Give it to your agent.</span>
           </h2>
           <p className="mt-6 text-lg leading-relaxed text-surface-500">
-            Tell your AI agent to use this URL as its paymaster when transacting on Taiko. It
-            handles the rest — quoting, permits, submission. Standard{" "}
+            Tell your AI agent to use this URL as its paymaster when transacting on Taiko. It only
+            needs standard viem + ERC-7677 JSON-RPC. Fresh accounts fund the counterfactual address
+            with USDC, then deploy and transact in one sponsored UserOp.{" "}
             <a
               href="https://eips.ethereum.org/EIPS/eip-7677"
               target="_blank"
@@ -99,6 +151,7 @@ export function CodeExample() {
           {[
             "Works with any ERC-4337 smart account",
             "Pure viem — no SDK or wrapper",
+            "Fund the undeployed address first",
             "Agent only needs USDC",
             "No API keys or signup",
           ].map((feature) => (
@@ -127,8 +180,9 @@ export function CodeExample() {
           <div>
             <h3 className="text-xl font-semibold text-surface-900">If you want the details</h3>
             <p className="mt-3 text-sm leading-relaxed text-surface-500">
-              Under the hood it&apos;s standard ERC-7677 JSON-RPC — get a quote, sign a USDC permit,
-              submit. Here&apos;s the full flow with viem.
+              Under the hood it&apos;s standard ERC-7677 JSON-RPC. The cold-start path is: stub
+              quote, prepend `permit()` if allowance is missing, quote the final UserOp, submit.
+              Here&apos;s the viem flow.
             </p>
 
             {/* Integration details */}

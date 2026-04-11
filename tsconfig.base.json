@@ -19,8 +19,6 @@
     "paths": {
       "@agent-paymaster/shared": ["packages/shared/src/index.ts"],
       "@agent-paymaster/shared/*": ["packages/shared/src/*"],
-      "@agent-paymaster/sdk": ["packages/sdk/src/index.ts"],
-      "@agent-paymaster/sdk/*": ["packages/sdk/src/*"],
       "@agent-paymaster/api/*": ["packages/api/src/*"],
       "@agent-paymaster/bundler/*": ["packages/bundler/src/*"]
     }

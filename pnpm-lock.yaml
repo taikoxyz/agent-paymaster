@@ -100,12 +100,6 @@ importers:
 
   packages/paymaster-contracts: {}
 
-  packages/sdk:
-    dependencies:
-      viem:
-        specifier: ^2.38.0
-        version: 2.47.1(typescript@5.9.3)
-
   packages/shared:
     dependencies:
       viem:

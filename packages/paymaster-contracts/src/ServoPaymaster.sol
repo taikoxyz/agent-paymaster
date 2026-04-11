@@ -17,12 +17,9 @@ contract ServoPaymaster is SingletonPaymasterV7 {
 
     error InvalidRecipient();
 
-    constructor(
-        address _entryPoint,
-        address _owner,
-        address _manager,
-        address[] memory _signers
-    ) SingletonPaymasterV7(_entryPoint, _owner, _manager, _signers) {}
+    constructor(address _entryPoint, address _owner, address _manager, address[] memory _signers)
+        SingletonPaymasterV7(_entryPoint, _owner, _manager, _signers)
+    {}
 
     /// @notice Sweeps ERC-20 tokens held by the paymaster to an arbitrary recipient.
     /// @dev Restricted to the admin role. Servo signs quotes with `treasury = address(this)`, so collected USDC
@@ -36,5 +33,17 @@ contract ServoPaymaster is SingletonPaymasterV7 {
         }
 
         IERC20(_token).safeTransfer(_to, _amount);
+    }
+
+    /// @notice Disables Pimlico's extra unused-gas penalty overlay for Servo-sponsored ops.
+    /// @dev EntryPoint still enforces its native unused-gas penalty. Servo intentionally bills only
+    /// actual gas cost plus the configured `postOpGas` buffer so token settlement stays predictable.
+    function _expectedPenaltyGasCost(uint256, uint256, uint128, uint256, uint256)
+        public
+        pure
+        override
+        returns (uint256)
+    {
+        return 0;
     }
 }

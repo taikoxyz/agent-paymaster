@@ -107,11 +107,7 @@ contract ServoPaymasterTest is Test {
         bytes memory erc20ConfigNoSig = _buildErc20ConfigNoSig(_validUntil, _validAfter);
         // modeByte = (mode=1 << 1) | allowAllBundlers=1 = 0x03
         return abi.encodePacked(
-            address(paymaster),
-            PAYMASTER_VERIFICATION_GAS,
-            PAYMASTER_POSTOP_GAS,
-            uint8(0x03),
-            erc20ConfigNoSig
+            address(paymaster), PAYMASTER_VERIFICATION_GAS, PAYMASTER_POSTOP_GAS, uint8(0x03), erc20ConfigNoSig
         );
     }
 
@@ -148,7 +144,8 @@ contract ServoPaymasterTest is Test {
     // -------------------------------------------------------------
 
     function test_rejectsValidateFromNonEntrypoint() public {
-        PackedUserOperation memory userOp = _buildSignedUserOp(hex"00", uint48(block.timestamp + 60), uint48(block.timestamp));
+        PackedUserOperation memory userOp =
+            _buildSignedUserOp(hex"00", uint48(block.timestamp + 60), uint48(block.timestamp));
 
         vm.expectRevert(bytes("Sender not EntryPoint"));
         paymaster.validatePaymasterUserOp(userOp, USER_OP_HASH, 0.001 ether);
@@ -191,10 +188,14 @@ contract ServoPaymasterTest is Test {
         uint256 paymasterBalance = usdc.balanceOf(address(paymaster));
         assertGt(paymasterBalance, 0, "treasury should have received USDC");
 
-        // Sanity: charge is at most maxTokenCost derived from requiredPreFund.
-        uint256 maxTokenCost = (requiredPreFund * EXCHANGE_RATE) / 1e18;
-        // Pimlico adds a penalty on unused gas, so actual can slightly exceed naive maxTokenCost; bound loosely.
-        assertLt(paymasterBalance, maxTokenCost * 3, "charge should be bounded");
+        uint256 expectedCharge = paymaster.getCostInToken(actualGasCost, POST_OP_GAS, actualFeePerGas, EXCHANGE_RATE);
+        assertEq(paymasterBalance, expectedCharge, "Servo should bill only actual gas plus billed postOp gas");
+    }
+
+    function test_expectedPenaltyGasCostIsZero() public view {
+        uint256 penalty = paymaster._expectedPenaltyGasCost(300_000, 2 gwei, POST_OP_GAS, 500_000, 200_000);
+
+        assertEq(penalty, 0, "Servo should not add Pimlico's extra penalty overlay");
     }
 
     function test_rejectsErc20ModeWithInvalidSigner() public {
@@ -233,11 +234,7 @@ contract ServoPaymasterTest is Test {
             bytes20(address(paymaster))
         );
         bytes memory unsignedPmAndData = abi.encodePacked(
-            address(paymaster),
-            PAYMASTER_VERIFICATION_GAS,
-            PAYMASTER_POSTOP_GAS,
-            uint8(0x03),
-            badConfig
+            address(paymaster), PAYMASTER_VERIFICATION_GAS, PAYMASTER_POSTOP_GAS, uint8(0x03), badConfig
         );
         bytes memory padded = abi.encodePacked(unsignedPmAndData, new bytes(65)); // 65-byte sig placeholder
 

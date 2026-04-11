@@ -26,9 +26,9 @@
 
 ```mermaid
 flowchart LR
-  A[Agent Wallet / SDK] --> B[AA API Gateway\nHono + TypeScript]
+  A[Agent Wallet / viem Client] --> B[AA API Gateway\nHono + TypeScript]
   B --> C[Bundler Service\nAlto Fork]
-  B --> D[Quote Service\nEIP-712 Signer]
+  B --> D[Quote Service\npersonal_sign Signer]
   C --> E[Taiko Debug RPC\nself-hosted taiko-geth]
   C --> F[EntryPoint v0.8/v0.7]
   F --> G[USDC Verifying Paymaster]
@@ -63,11 +63,8 @@ Responsibilities:
 
 Key routes (MVP):
 
-- `POST /v1/paymaster/quote`
-  - Input: sender, chainId, entryPoint, gas fee params, token (`USDC`), permit payload.
-  - Output: fully packed on-chain `paymasterAndData`, raw `paymasterData`, and the exact gas limits the signed quote is bound to (`callGasLimit`, `verificationGasLimit`, `preVerificationGas`, `paymasterVerificationGasLimit`, `paymasterPostOpGasLimit`, `validUntil`, `quoteId`).
 - `POST /rpc`
-  - Proxy for `eth_sendUserOperation`, `eth_estimateUserOperationGas`, `eth_getUserOperationReceipt`, `eth_supportedEntryPoints`.
+  - JSON-RPC gateway for `pm_getPaymasterStubData`, `pm_getPaymasterData`, `eth_sendUserOperation`, `eth_estimateUserOperationGas`, `eth_getUserOperationReceipt`, and `eth_supportedEntryPoints`.
 - `GET /health`
   - Aggregated health of API, DB, bundler, and debug RPC availability.
 
@@ -115,15 +112,15 @@ Responsibilities:
 
 ## 7) UserOperation Lifecycle (Data Flow)
 
-1. Agent builds a partial `UserOperation`.
-2. Agent calls `POST /v1/paymaster/quote` to get signed paymaster fields.
-3. API returns paymaster payload plus gas limits and validity window.
-4. Agent (or API) submits full UserOp via `eth_sendUserOperation` to bundler.
-5. Bundler simulates UserOp using debug trace against Taiko state.
-6. Bundler bundles and submits `handleOps` transaction.
-7. EntryPoint calls paymaster validation.
-8. UserOp executes.
-9. EntryPoint calls paymaster `postOp` for final USDC settlement/refund.
+1. Agent builds a partial `UserOperation`, including `initCode` if the account is still counterfactual.
+2. Agent calls `pm_getPaymasterStubData` to learn gas bounds, the paymaster address, the token address, and `maxTokenCost`.
+3. If the account lacks allowance, the client signs an EIP-2612 permit and prepends it to the account `callData` in the same UserOperation.
+4. Agent calls `pm_getPaymasterData` for the exact final `UserOperation`.
+5. API returns the fully packed paymaster payload plus gas limits and validity window.
+6. Agent signs and submits the full UserOp via `eth_sendUserOperation` to the bundler.
+7. Bundler simulates the final UserOp using debug trace against Taiko state.
+8. Bundler bundles and submits `handleOps`.
+9. EntryPoint calls paymaster validation, the account executes, and `postOp` settles the final USDC charge.
 10. Indexer records `UserOperationSponsored` and lifecycle status.
 
 ## 8) Smart Contract Architecture
@@ -176,7 +173,7 @@ Returns context for `postOp` settlement.
 ## 8.4 Settlement Path (`postOp`)
 
 - Compute actual token charge from actual gas cost + signed surcharge and signed exchange rate.
-- Pull USDC via permit/allowance path.
+- Pull USDC in `postOp` after the account's batched permit/allowance path has already executed.
 - Refund excess if prefund > actual.
 - Emit accounting event with effective price/cost values.
 
@@ -207,9 +204,7 @@ Compatibility goals:
 
 ## 9.2 REST (control plane)
 
-- `POST /v1/paymaster/quote`
-- `GET /v1/paymaster/config`
-- `GET /v1/paymaster/chains`
+- `GET /capabilities`
 - `GET /v1/ops/:userOpHash`
 
 All REST responses include deterministic error codes for client retry behavior.
@@ -284,4 +279,4 @@ All REST responses include deterministic error codes for client retry behavior.
 - Final canonical EntryPoint set for Taiko production deployment (v0.8 only or dual v0.7/v0.8).
 - Preferred USDC token contract addresses per environment.
 - Surcharge model for MVP (`0%` vs configurable flat percentage).
-- Whether permit signature is mandatory in MVP or allowance fallback is acceptable.
+- Whether to expose the paymaster address directly in capabilities, even though `pm_getPaymasterStubData` already reveals the spender for no-SDK clients.

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { EntryPointMonitor } from "./entrypoint-monitor.js";
 
-const PAYMASTER_ADDRESS = "0xCa675148201E29b13A848cE30c3074c8dE995891";
+const PAYMASTER_ADDRESS = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const DEPOSITS_SELECTOR = "0xfc7e286d";
 
 const createMockFetch = (balanceHex: string) =>

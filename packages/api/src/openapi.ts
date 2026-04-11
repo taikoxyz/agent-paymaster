@@ -39,7 +39,7 @@ export const openApiDocument = {
         responses: {
           "200": {
             description:
-              "Supported chains, entry points, token addresses, optional factory, and USDC allowance bootstrap requirements",
+              "Supported chains, entry points, token addresses, optional factory, and cold-start USDC allowance bootstrap requirements",
           },
         },
       },

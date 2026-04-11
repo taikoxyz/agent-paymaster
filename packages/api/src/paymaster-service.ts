@@ -25,6 +25,8 @@ const UINT128_MAX = (1n << 128n) - 1n;
 const UINT48_MAX = (1n << 48n) - 1n;
 const BPS_SCALE = 10_000n;
 const RPC_INVALID_PARAMS = -32602;
+const DEFAULT_BILLED_PAYMASTER_VALIDATION_GAS_LIMIT = 50_000n;
+const DEFAULT_BILLED_PAYMASTER_POST_OP_GAS = 50_000n;
 
 interface PaymasterCapabilityChain {
   name: ChainName;
@@ -38,13 +40,14 @@ interface PaymasterCapabilityToken {
 
 /**
  * Describes Servo's pre-UserOp allowance requirement for ERC-20 sponsorship: the sender must have the
- * paymaster approved for at least `maxTokenCost` USDC. The SDK's `flow.ts` bootstraps this via a
- * permit-only setup UserOp for first-time accounts; subsequent ops rely on the persistent allowance.
+ * paymaster approved for at least `maxTokenCost` USDC. First-time accounts can satisfy this in the
+ * same cold-start UserOperation by prepending an EIP-2612 `permit(MAX_UINT256)` call before the real
+ * action(s); subsequent ops reuse the persistent allowance.
  */
 interface PaymasterAllowanceRequirements {
   standard: "EIP-2612";
   spender: "paymaster";
-  bootstrap: "setup-userop";
+  bootstrap: "bundled-userop";
 }
 
 export interface GasPriceGuidance {
@@ -568,7 +571,7 @@ export class PaymasterService {
       allowance: {
         standard: "EIP-2612",
         spender: "paymaster",
-        bootstrap: "setup-userop",
+        bootstrap: "bundled-userop",
       },
       ...(gasPriceGuidance !== null ? { gasPriceGuidance } : {}),
     };
@@ -667,17 +670,25 @@ export class PaymasterService {
       "maxPriorityFeePerGas",
       "maxFeePerGas",
     );
+    const billedPaymasterValidationGasLimit =
+      gas.paymasterVerificationGasLimit < DEFAULT_BILLED_PAYMASTER_VALIDATION_GAS_LIMIT
+        ? gas.paymasterVerificationGasLimit
+        : DEFAULT_BILLED_PAYMASTER_VALIDATION_GAS_LIMIT;
+    const billedPaymasterPostOpGas =
+      gas.paymasterPostOpGasLimit < DEFAULT_BILLED_PAYMASTER_POST_OP_GAS
+        ? gas.paymasterPostOpGasLimit
+        : DEFAULT_BILLED_PAYMASTER_POST_OP_GAS;
 
-    // Build the inner ERC-20 mode paymasterConfig bytes. The paymaster pools funds on itself, so
-    // treasury = paymasterAddress. paymasterValidationGasLimit matches the packed verification gas
-    // so Pimlico's preOpGas approximation (used for its penalty calc) is accurate.
+    // Build the inner ERC-20 mode paymasterConfig bytes. The outer gas fields remain conservative
+    // execution caps, but Servo bills against smaller fixed inner values to avoid overcharging in
+    // token settlement. The paymaster pools funds on itself, so treasury = paymasterAddress.
     const erc20ConfigBytes = encodeServoErc20PaymasterConfig({
       validUntil: toBoundedNumber(BigInt(validUntilSeconds), UINT48_MAX, "validUntil"),
       validAfter: toBoundedNumber(BigInt(validAfterSeconds), UINT48_MAX, "validAfter"),
       token: tokenAddress as `0x${string}`,
-      postOpGas: gas.paymasterPostOpGasLimit,
+      postOpGas: billedPaymasterPostOpGas,
       exchangeRate,
-      paymasterValidationGasLimit: gas.paymasterVerificationGasLimit,
+      paymasterValidationGasLimit: billedPaymasterValidationGasLimit,
       treasury: this.config.paymasterAddress as `0x${string}`,
     });
 

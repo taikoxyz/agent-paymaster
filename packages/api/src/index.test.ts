@@ -297,7 +297,7 @@ describe("api gateway", () => {
     expect(payload.result.allowance).toEqual({
       standard: "EIP-2612",
       spender: "paymaster",
-      bootstrap: "setup-userop",
+      bootstrap: "bundled-userop",
     });
     expect(bundlerClient.rpcCalls).toHaveLength(0);
   });
@@ -583,6 +583,37 @@ describe("api gateway", () => {
 
     // First byte of paymasterData = mode byte = (1 << 1) | 1 = 0x03 (ERC20 + allowAllBundlers).
     expect(paymasterData.slice(2, 4)).toBe("03");
+  });
+
+  it("pm_getPaymasterData signs lower billed inner gas than the outer execution caps", async () => {
+    const bundlerClient = new FakeBundlerClient();
+    const app = createTestApp(bundlerClient);
+
+    const response = await app.request("/rpc", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 11,
+        method: "pm_getPaymasterData",
+        params: [SAMPLE_USER_OPERATION, ENTRY_POINT_V07, "taikoMainnet"],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+
+    expect(payload.result.paymasterPostOpGasLimit).toBe("0x13880");
+    expect(payload.result.paymasterVerificationGasLimit).toBe("0x1d4c0");
+
+    const paymasterData: string = payload.result.paymasterData;
+    const configHex = paymasterData.slice(2);
+    // Bytes 34..50 within the inner config = billed postOpGas.
+    expect(configHex.slice(68, 100)).toBe("0000000000000000000000000000c350");
+    // Bytes 82..98 within the inner config = billed paymasterValidationGasLimit.
+    expect(configHex.slice(164, 196)).toBe("0000000000000000000000000000c350");
   });
 
   it("pm_getPaymasterStubData ignores extra context params", async () => {

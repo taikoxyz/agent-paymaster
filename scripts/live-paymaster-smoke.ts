@@ -98,9 +98,7 @@ const entryPointAddress = getAddress(
 const usdcAddress = getAddress(
   process.env.USDC_ADDRESS ?? "0x07d83526730c7438048D55A4fc0b850e2aaB6f0b",
 );
-const paymasterAddress = getAddress(
-  process.env.PAYMASTER_ADDRESS ?? "0xCa675148201E29b13A848cE30c3074c8dE995891",
-);
+const paymasterAddress = getAddress(requireEnv("PAYMASTER_ADDRESS"));
 const quoteTtlSeconds = Number(process.env.PAYMASTER_QUOTE_TTL_SECONDS ?? "90");
 const surchargeBps = BigInt(process.env.PAYMASTER_SURCHARGE_BPS ?? "500");
 const smokePriceOverride = process.env.SMOKE_USDC_PER_ETH_MICROS;
