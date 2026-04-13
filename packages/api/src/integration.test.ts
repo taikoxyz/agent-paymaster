@@ -10,7 +10,7 @@ import { BundlerService } from "@agent-paymaster/bundler";
 
 import type { BundlerClient, DependencyHealth } from "./bundler-client.js";
 import { createApp } from "./index.js";
-import { StaticPriceProvider } from "./price-provider.js";
+import { StaticPriceProvider } from "./test-helpers.js";
 import { FixedWindowRateLimiter, type LayeredRateLimiter } from "./rate-limit.js";
 import type { JsonRpcRequest, JsonRpcResponse } from "@agent-paymaster/shared";
 

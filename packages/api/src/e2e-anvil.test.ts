@@ -47,7 +47,7 @@ import {
 import { BundlerSubmitter } from "@agent-paymaster/bundler/src/submitter.js";
 
 import { createApp } from "./index.js";
-import { StaticPriceProvider } from "./price-provider.js";
+import { StaticPriceProvider } from "./test-helpers.js";
 import type { JsonRpcRequest, JsonRpcResponse } from "@agent-paymaster/shared";
 import type { DependencyHealth } from "./bundler-client.js";
 

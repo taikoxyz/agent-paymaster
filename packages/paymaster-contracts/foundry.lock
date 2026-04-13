@@ -5,6 +5,9 @@
       "rev": "7af70c8993a6f42973f520ae0752386a5032abe7"
     }
   },
+  "lib/account-abstraction-v6": {
+    "rev": "abff2aca61a8f0934e533d0d352978055fddbd96"
+  },
   "lib/forge-std": {
     "tag": {
       "name": "v1.15.0",
@@ -16,5 +19,11 @@
       "name": "v5.6.1",
       "rev": "5fd1781b1454fd1ef8e722282f86f9293cacf256"
     }
+  },
+  "lib/pimlico-singleton-paymaster": {
+    "rev": "1e2305d1102242379b582142f62bd17add12b8c2"
+  },
+  "lib/solady": {
+    "rev": "90db92ce173856605d24a554969f2c67cadbc7e9"
   }
 }

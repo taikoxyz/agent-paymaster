@@ -793,11 +793,14 @@ export const createApp = (options: CreateAppOptions = {}): Hono => {
     }
   });
 
-  app.get("/health", async (c) => {
-    const [bundlerHealth, depositHealth] = await Promise.all([
+  const fetchDependencyHealth = () =>
+    Promise.all([
       bundlerClient.health(),
       entryPointMonitor?.checkDeposit() ?? Promise.resolve(undefined),
-    ]);
+    ] as const);
+
+  app.get("/health", async (c) => {
+    const [bundlerHealth, depositHealth] = await fetchDependencyHealth();
 
     const depositDegraded = depositHealth?.status === "critical";
     const status = bundlerHealth.status !== "ok" || depositDegraded ? "degraded" : "ok";
@@ -813,10 +816,7 @@ export const createApp = (options: CreateAppOptions = {}): Hono => {
   });
 
   app.get("/status", async (c) => {
-    const [bundlerHealth, depositHealth] = await Promise.all([
-      bundlerClient.health(),
-      entryPointMonitor?.checkDeposit() ?? Promise.resolve(undefined),
-    ]);
+    const [bundlerHealth, depositHealth] = await fetchDependencyHealth();
 
     const depositDegraded = depositHealth?.status === "critical";
     const status = bundlerHealth.status !== "ok" || depositDegraded ? "degraded" : "ready";
@@ -837,10 +837,7 @@ export const createApp = (options: CreateAppOptions = {}): Hono => {
   app.get("/capabilities", async (c) => c.json(await paymasterService.getCapabilities()));
 
   app.get("/metrics", async (c) => {
-    const [bundlerHealth, depositHealth] = await Promise.all([
-      bundlerClient.health(),
-      entryPointMonitor?.checkDeposit() ?? Promise.resolve(undefined),
-    ]);
+    const [bundlerHealth, depositHealth] = await fetchDependencyHealth();
     const successfulQuotes = metrics.getCounterSum("api_paymaster_quotes_total", {
       result: "ok",
     });

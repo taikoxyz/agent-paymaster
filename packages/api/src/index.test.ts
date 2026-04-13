@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { BundlerClient } from "./bundler-client.js";
 import { EntryPointMonitor } from "./entrypoint-monitor.js";
 import { createApp, validateConfig } from "./index.js";
-import { StaticPriceProvider } from "./price-provider.js";
+import { StaticPriceProvider } from "./test-helpers.js";
 import { FixedWindowRateLimiter } from "./rate-limit.js";
 import type { JsonRpcRequest, JsonRpcResponse } from "@agent-paymaster/shared";
 

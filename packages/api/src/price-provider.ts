@@ -6,26 +6,6 @@ export interface PriceProvider {
   describe(): string;
 }
 
-export class StaticPriceProvider implements PriceProvider {
-  private readonly usdcPerEthMicros: bigint;
-
-  constructor(usdcPerEthMicros: bigint) {
-    if (usdcPerEthMicros <= 0n) {
-      throw new Error("Static price provider requires a positive usdcPerEthMicros value");
-    }
-
-    this.usdcPerEthMicros = usdcPerEthMicros;
-  }
-
-  getUsdcPerEthMicros(): bigint {
-    return this.usdcPerEthMicros;
-  }
-
-  describe(): string {
-    return "static";
-  }
-}
-
 interface PriceObservation {
   source: string;
   usdcPerEthMicros: bigint;
