@@ -1,6 +1,7 @@
 import { bigIntToHex } from "@agent-paymaster/shared";
 
 import type { GasPriceGuidance, GasPriceOracle } from "./paymaster-service.js";
+import { median } from "./price-provider.js";
 
 const DEFAULT_TAIKO_RPC_URL = "https://rpc.mainnet.taiko.xyz";
 const DEFAULT_CACHE_TTL_MS = 10_000;
@@ -155,9 +156,7 @@ export class RpcGasPriceOracle implements GasPriceOracle {
       }
 
       if (tips.length > 0) {
-        tips.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-        const mid = Math.floor(tips.length / 2);
-        const rawMedian = tips.length % 2 === 0 ? (tips[mid - 1] + tips[mid]) / 2n : tips[mid];
+        const rawMedian = median(tips);
         medianTip = rawMedian > MIN_PRIORITY_FEE_WEI ? rawMedian : MIN_PRIORITY_FEE_WEI;
       }
     }

@@ -444,7 +444,7 @@ const assertFresh = (
   }
 };
 
-const median = (values: readonly bigint[]): bigint => {
+export const median = (values: readonly bigint[]): bigint => {
   if (values.length === 0) {
     throw new Error("Cannot compute a median from an empty set");
   }

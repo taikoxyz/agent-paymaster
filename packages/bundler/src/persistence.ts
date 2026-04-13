@@ -56,56 +56,30 @@ export class BundlerPersistenceStore {
       );
     `);
 
-    this.migratePendingUserOperationsTable();
-    this.migrateFinalizedUserOperationsTable();
-    this.migrateSenderReputationsTable();
+    this.ensureColumns("pending_user_operations", [
+      { name: "state", definition: "TEXT NOT NULL DEFAULT 'pending'" },
+      { name: "submission_tx_hash", definition: "TEXT" },
+      { name: "submission_started_at", definition: "INTEGER" },
+    ]);
+    this.ensureColumns("finalized_user_operations", [{ name: "receipt_logs", definition: "TEXT" }]);
+    this.ensureColumns("sender_reputations", [
+      { name: "window_started_at", definition: "INTEGER" },
+      { name: "throttled_until", definition: "INTEGER" },
+    ]);
     this.deleteExpiredSenderReputations();
   }
 
-  private migratePendingUserOperationsTable(): void {
-    const columns = this.db.prepare("PRAGMA table_info(pending_user_operations)").all() as Array<{
-      name: string;
-    }>;
-    const columnNames = new Set(columns.map((column) => column.name));
+  private ensureColumns(table: string, columns: Array<{ name: string; definition: string }>): void {
+    const existing = new Set(
+      (this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(
+        (column) => column.name,
+      ),
+    );
 
-    if (!columnNames.has("state")) {
-      this.db.exec(
-        "ALTER TABLE pending_user_operations ADD COLUMN state TEXT NOT NULL DEFAULT 'pending'",
-      );
-    }
-
-    if (!columnNames.has("submission_tx_hash")) {
-      this.db.exec("ALTER TABLE pending_user_operations ADD COLUMN submission_tx_hash TEXT");
-    }
-
-    if (!columnNames.has("submission_started_at")) {
-      this.db.exec("ALTER TABLE pending_user_operations ADD COLUMN submission_started_at INTEGER");
-    }
-  }
-
-  private migrateSenderReputationsTable(): void {
-    const columns = this.db.prepare("PRAGMA table_info(sender_reputations)").all() as Array<{
-      name: string;
-    }>;
-    const columnNames = new Set(columns.map((column) => column.name));
-
-    if (!columnNames.has("window_started_at")) {
-      this.db.exec("ALTER TABLE sender_reputations ADD COLUMN window_started_at INTEGER");
-    }
-
-    if (!columnNames.has("throttled_until")) {
-      this.db.exec("ALTER TABLE sender_reputations ADD COLUMN throttled_until INTEGER");
-    }
-  }
-
-  private migrateFinalizedUserOperationsTable(): void {
-    const columns = this.db.prepare("PRAGMA table_info(finalized_user_operations)").all() as Array<{
-      name: string;
-    }>;
-    const columnNames = new Set(columns.map((column) => column.name));
-
-    if (!columnNames.has("receipt_logs")) {
-      this.db.exec("ALTER TABLE finalized_user_operations ADD COLUMN receipt_logs TEXT");
+    for (const column of columns) {
+      if (!existing.has(column.name)) {
+        this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column.name} ${column.definition}`);
+      }
     }
   }
 
