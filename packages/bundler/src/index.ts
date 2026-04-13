@@ -732,7 +732,11 @@ export class BundlerService {
     this.reputation.ensureCanSubmit(preparedUserOperation.sender);
     assertEntryPointSupported(parsed.entryPoint, this.config.entryPoints);
 
-    const userOpHash = this.buildUserOpHash(preparedUserOperation, parsed.entryPoint);
+    const userOpHash = buildCanonicalUserOpHash(
+      preparedUserOperation,
+      parsed.entryPoint,
+      this.config.chainId,
+    );
     const matchingPendingOperation = this.findOpenOperationBySenderAndNonce(
       preparedUserOperation.sender,
       hexToBigInt(preparedUserOperation.nonce),
@@ -1024,7 +1028,9 @@ export class BundlerService {
     const userOperationHashes = claim.userOperations.map((operation) => operation.hash);
     const sequence = this.bundleSequence;
     this.bundleSequence += 1;
-    const bundleHash = this.buildDeterministicHash(`${sequence}:${userOperationHashes.join(":")}`);
+    const bundleHash = `0x${createHash("sha256")
+      .update(`${sequence}:${userOperationHashes.join(":")}`)
+      .digest("hex")}`;
 
     for (const operation of claim.userOperations) {
       const stored = this.userOperations.get(operation.hash);
@@ -1288,14 +1294,6 @@ export class BundlerService {
         reason: "unhandled_exception",
       });
     }
-  }
-
-  private buildUserOpHash(userOperation: UserOperation, entryPoint: HexString): string {
-    return buildCanonicalUserOpHash(userOperation, entryPoint, this.config.chainId);
-  }
-
-  private buildDeterministicHash(input: string): string {
-    return `0x${createHash("sha256").update(input).digest("hex")}`;
   }
 
   private findOpenOperationBySenderAndNonce(

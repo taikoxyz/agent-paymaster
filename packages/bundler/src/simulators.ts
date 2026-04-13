@@ -125,12 +125,11 @@ export class ViemAdmissionSimulator implements AdmissionSimulator {
       });
     } catch (error) {
       const classified = classifySimulationValidation(error);
-      if (classified?.success) {
+      if (classified) {
+        if (!classified.success) {
+          throw new Error(classified.reason);
+        }
         return;
-      }
-
-      if (classified && !classified.success) {
-        throw new Error(classified.reason);
       }
 
       // v0.7 EntryPoint does not expose simulateValidation on the production

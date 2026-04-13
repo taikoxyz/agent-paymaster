@@ -232,41 +232,7 @@ const decodeSimulationError = (
   }
 };
 
-export const extractSimulationPreOpGas = (error: unknown): bigint | null => {
-  if (error instanceof BaseError) {
-    const reverted = error.walk(
-      (candidate) => candidate instanceof ContractFunctionRevertedError,
-    ) as ContractFunctionRevertedError | null;
-
-    if (!reverted || reverted.data === undefined) {
-      return null;
-    }
-
-    const revertData = reverted.data as unknown;
-
-    if (typeof revertData === "string" && revertData.startsWith("0x")) {
-      return decodeSimulationRevertData(revertData as HexString);
-    }
-
-    if (
-      typeof revertData === "object" &&
-      revertData !== null &&
-      "data" in revertData &&
-      typeof revertData.data === "string" &&
-      revertData.data.startsWith("0x")
-    ) {
-      return decodeSimulationRevertData(revertData.data as HexString);
-    }
-
-    return null;
-  }
-
-  return null;
-};
-
-export const classifySimulationValidation = (
-  error: unknown,
-): { success: true } | { success: false; reason: string } | null => {
+const extractRevertPayload = (error: unknown): HexString | null => {
   if (!(error instanceof BaseError)) {
     return null;
   }
@@ -281,7 +247,7 @@ export const classifySimulationValidation = (
   const revertData = reverted.data as unknown;
 
   if (typeof revertData === "string" && revertData.startsWith("0x")) {
-    return decodeSimulationError(revertData as HexString);
+    return revertData as HexString;
   }
 
   if (
@@ -291,10 +257,22 @@ export const classifySimulationValidation = (
     typeof revertData.data === "string" &&
     revertData.data.startsWith("0x")
   ) {
-    return decodeSimulationError(revertData.data as HexString);
+    return revertData.data as HexString;
   }
 
   return null;
+};
+
+export const extractSimulationPreOpGas = (error: unknown): bigint | null => {
+  const payload = extractRevertPayload(error);
+  return payload !== null ? decodeSimulationRevertData(payload) : null;
+};
+
+export const classifySimulationValidation = (
+  error: unknown,
+): { success: true } | { success: false; reason: string } | null => {
+  const payload = extractRevertPayload(error);
+  return payload !== null ? decodeSimulationError(payload) : null;
 };
 
 export const collectUserOperationExecutions = (
