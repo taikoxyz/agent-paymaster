@@ -12,7 +12,9 @@ Format:
 
 ### Changed
 
-- Replaced the hand-rolled `TaikoUsdcPaymaster` contract with a thin `ServoPaymaster` wrapper over Pimlico's audited `SingletonPaymasterV7` (vendored from `pimlicolabs/singleton-paymaster` under `packages/paymaster-contracts/src/pimlico/`). Deletes ~550 lines of custom contract surface in exchange for Pimlico's audited base.
+- Replaced the hand-rolled `TaikoUsdcPaymaster` contract with a thin `ServoPaymaster` wrapper over Pimlico's audited `SingletonPaymasterV7`, imported directly from the upstream `pimlicolabs/singleton-paymaster` git submodule instead of an in-tree vendored copy. Deletes ~550 lines of custom contract surface in exchange for Pimlico's audited base, and upstream security fixes now flow in with a submodule bump.
+- Bumped `solc` to `0.8.26` and set `evm_version = "shanghai"` in `packages/paymaster-contracts/foundry.toml` to match Taiko's active fork (it was previously `cancun`, which would have produced bytecode that reverts on Taiko if any contract emitted Cancun-only opcodes).
+- Downgraded the `openzeppelin-contracts` submodule to `v5.0.2` so it matches Pimlico's pin and predates the Cancun-only `mcopy` inline assembly added in later 5.x releases. Also added `pimlico-singleton-paymaster`, `solady`, and `account-abstraction-v6` submodules under `packages/paymaster-contracts/lib/` — the last is required by Pimlico's dual-version `BaseSingletonPaymaster` which imports the v0.6 `UserOperation` struct.
 - Quote signatures now use EIP-191 `personal_sign` over Pimlico's custom UserOp hash instead of EIP-712. Off-chain signer implementations must switch from `signTypedData` to `signMessage`.
 - The 5% Servo surcharge is now baked into the signed `exchangeRate` instead of carrying a separate `surchargeBps` field — Pimlico's ERC-20 mode has no surcharge slot.
 - USDC allowance is no longer bundled into `paymasterData`. Fresh accounts now prepend `permit(MAX_UINT256)` to the account `callData` and batch it with the real action in a single UserOperation, so a counterfactual account can be funded, deployed, approved, and used without ever holding ETH.

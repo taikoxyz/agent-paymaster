@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 import {PackedUserOperation} from "account-abstraction/contracts/interfaces/PackedUserOperation.sol";
@@ -7,8 +7,8 @@ import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/Messa
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 
 import {ServoPaymaster} from "../src/ServoPaymaster.sol";
-import {PostOpMode} from "../src/pimlico/interfaces/PostOpMode.sol";
-import {BaseSingletonPaymaster} from "../src/pimlico/base/BaseSingletonPaymaster.sol";
+import {PostOpMode} from "pimlico-singleton-paymaster/src/interfaces/PostOpMode.sol";
+import {BaseSingletonPaymaster} from "pimlico-singleton-paymaster/src/base/BaseSingletonPaymaster.sol";
 import {MockEntryPoint} from "./mocks/MockEntryPoint.sol";
 import {MockERC20Permit} from "./mocks/MockERC20Permit.sol";
 

@@ -46,7 +46,7 @@ packages/
 
 Bundler lifecycle notes: pending and finalized UserOps are persisted in SQLite so receipt lookups survive restarts, finalized receipt logs remain available via `eth_getUserOperationReceipt`, failed hash-identical retries are requeued, and finalized retention is capped to keep memory bounded.
 
-**Key design decision**: pricing is off-chain (API signs bounded quotes), validation is on-chain (contract checks signature, never calls external oracles). The paymaster contract is Pimlico's audited `SingletonPaymasterV7` vendored under `packages/paymaster-contracts/src/pimlico/`, wrapped by a `ServoPaymaster.sol` that adds a treasury sweep and disables Pimlico's extra penalty overlay. Signatures are EIP-191 `personal_sign` over Pimlico's custom UserOp hash (not EIP-712).
+**Key design decision**: pricing is off-chain (API signs bounded quotes), validation is on-chain (contract checks signature, never calls external oracles). The paymaster contract is Pimlico's audited `SingletonPaymasterV7` pulled in directly from the upstream `pimlicolabs/singleton-paymaster` submodule, wrapped by a `ServoPaymaster.sol` that adds a treasury sweep and disables Pimlico's extra penalty overlay. Signatures are EIP-191 `personal_sign` over Pimlico's custom UserOp hash (not EIP-712).
 
 ## API Endpoints
 
@@ -64,10 +64,9 @@ Monitoring signals exposed in `/metrics` include submitter ETH balance, mempool 
 
 ## Contracts
 
-**Solidity 0.8.24** with Foundry (optimizer 200 runs, via-ir, Cancun EVM).
+**Solidity 0.8.26** with Foundry (optimizer 200 runs, via-ir, Shanghai EVM — matches Taiko's active fork).
 
-- `ServoPaymaster.sol` — wraps `pimlico/SingletonPaymasterV7.sol`, adds an admin-gated `withdrawToken` sweep, and overrides Pimlico's extra unused-gas penalty hook to zero. ERC-20 mode only; off-chain signer sets `treasury = address(this)` so USDC accumulates on the contract.
-- `pimlico/` — vendored Pimlico base contracts (`SingletonPaymasterV7`, `BaseSingletonPaymaster`, `BasePaymaster`, `MultiSigner`, `ManagerAccessControl`, `interfaces/*`). Pragma lowered to `^0.8.24`; `solady` `SafeTransferLib` replaced with OZ `SafeERC20`; v0.6 `UserOperation` overload removed.
+- `ServoPaymaster.sol` — imports Pimlico's `SingletonPaymasterV7` directly from the `pimlico-singleton-paymaster` submodule, adds an admin-gated `withdrawToken` sweep, and overrides Pimlico's extra unused-gas penalty hook to zero. ERC-20 mode only; off-chain signer sets `treasury = address(this)` so USDC accumulates on the contract.
 - `ServoAccount.sol` — canonical single-owner ERC-4337 account with `execute`/`executeBatch`, ERC-1271 validation, and ERC-721 safe-receive. Fresh-account clients use `executeBatch([USDC.permit(...), ...realCalls])` so allowance setup and the real action happen in one UserOp.
 - `ServoAccountFactory.sol` — deterministic CREATE2 factory for ServoAccount deployment and address derivation
 - `PaymasterStub.sol` — testing stub (in `test/`)
@@ -77,7 +76,7 @@ Contract tests: `cd packages/paymaster-contracts && forge test -vvv`
 Gas report: `forge test --gas-report`
 Factory deployment script: `script/DeployServoAccountFactory.s.sol`
 
-Submodules: `account-abstraction`, `openzeppelin-contracts`, `forge-std`. Clone with `--recurse-submodules`.
+Submodules (all under `packages/paymaster-contracts/lib/`): `account-abstraction` (v0.7.0), `account-abstraction-v6` (v0.6.0, required by Pimlico's dual-version base), `openzeppelin-contracts` (v5.0.2, matches Pimlico's pin and predates Cancun-only `mcopy`), `pimlico-singleton-paymaster`, `solady`, `forge-std`. Foundry remappings alias `@account-abstraction-v7/`, `@account-abstraction-v6/`, `@openzeppelin-v5.0.2/contracts/`, `solady/`, and `pimlico-singleton-paymaster/` so the upstream Pimlico sources resolve unchanged. Clone with `--recurse-submodules`.
 
 ## Environment
 

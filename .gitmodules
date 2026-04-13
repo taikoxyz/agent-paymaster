@@ -7,3 +7,12 @@
 [submodule "packages/paymaster-contracts/lib/forge-std"]
 	path = packages/paymaster-contracts/lib/forge-std
 	url = https://github.com/foundry-rs/forge-std
+[submodule "packages/paymaster-contracts/lib/pimlico-singleton-paymaster"]
+	path = packages/paymaster-contracts/lib/pimlico-singleton-paymaster
+	url = https://github.com/pimlicolabs/singleton-paymaster
+[submodule "packages/paymaster-contracts/lib/solady"]
+	path = packages/paymaster-contracts/lib/solady
+	url = https://github.com/Vectorized/solady
+[submodule "packages/paymaster-contracts/lib/account-abstraction-v6"]
+	path = packages/paymaster-contracts/lib/account-abstraction-v6
+	url = https://github.com/eth-infinitism/account-abstraction

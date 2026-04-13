@@ -128,7 +128,7 @@ Responsibilities:
 ## 8.1 Contracts
 
 - `ServoPaymaster` (main contract)
-  - Inherits Pimlico's `SingletonPaymasterV7` (vendored from `pimlicolabs/singleton-paymaster` under `packages/paymaster-contracts/src/pimlico/`) and adds an admin-gated `withdrawToken` sweep for the pooled treasury.
+  - Inherits Pimlico's `SingletonPaymasterV7` directly from the upstream `pimlicolabs/singleton-paymaster` git submodule (pulled in under `packages/paymaster-contracts/lib/`) and adds an admin-gated `withdrawToken` sweep for the pooled treasury.
   - ERC-20 mode only in practice; Servo pools USDC on the contract itself (`treasury = address(this)`).
   - Emits Pimlico's `UserOperationSponsored` event on every charged UserOp.
 - `ServoAccount` (canonical agent account)
