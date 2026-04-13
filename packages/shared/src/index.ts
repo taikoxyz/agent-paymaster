@@ -1,5 +1,28 @@
 import { encodeAbiParameters, keccak256 } from "viem";
 
+export { logEvent, type LogLevel, type LogFields } from "./logger.js";
+export {
+  type JsonRpcId,
+  type JsonRpcRequest,
+  type JsonRpcErrorObject,
+  type JsonRpcSuccess,
+  type JsonRpcFailure,
+  type JsonRpcResponse,
+  isJsonRpcFailure,
+  makeJsonRpcError,
+  makeJsonRpcResult,
+  isJsonRpcId,
+  isJsonRpcRequest,
+  isObject,
+  RPC_PARSE_ERROR,
+  RPC_INVALID_REQUEST,
+  RPC_METHOD_NOT_FOUND,
+  RPC_INVALID_PARAMS,
+  RPC_INTERNAL_ERROR,
+  RPC_RESOURCE_UNAVAILABLE,
+  RPC_RATE_LIMITED,
+} from "./json-rpc.js";
+
 export type ChainName = "taikoMainnet" | "taikoHoodi";
 export type HexString = `0x${string}`;
 export type Address = `0x${string}`;
@@ -10,10 +33,8 @@ export const SERVO_TAIKO_ENTRY_POINT_V07: Address = "0x0000000071727de22e5e9d8ba
 /** EntryPoints Servo can actually execute through the configured paymaster path. */
 export const SERVO_SUPPORTED_ENTRY_POINTS = [SERVO_TAIKO_ENTRY_POINT_V07] as const;
 
-export interface RpcConfig {
-  chain: ChainName;
-  rpcUrl: string;
-}
+/** Default public Taiko mainnet RPC endpoint, used as last-resort fallback. */
+export const DEFAULT_TAIKO_RPC_URL = "https://rpc.mainnet.taiko.xyz";
 
 export interface ServiceHealth {
   service: string;
@@ -32,7 +53,6 @@ export const buildHealth = (service: string): ServiceHealth => ({
  * parses them. See `src/pimlico/SingletonPaymasterV7.sol` for the byte-level layout.
  */
 export const SERVO_PAYMASTER_MODE_ERC20 = 1;
-export const SERVO_PAYMASTER_MODE_VERIFYING = 0;
 
 /**
  * Fixed size in bytes of the ERC-20 paymaster config (mode byte + flags byte + fixed 117-byte config),
@@ -40,9 +60,37 @@ export const SERVO_PAYMASTER_MODE_VERIFYING = 0;
  */
 export const SERVO_ERC20_PAYMASTER_DATA_NO_SIG_LENGTH = 118;
 
-const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
-const HEX_BYTES_PATTERN = /^0x(?:[a-fA-F0-9]{2})*$/;
-const UINT128_MAX = (1n << 128n) - 1n;
+export const bigIntToHex = (value: bigint): HexString => {
+  if (value < 0n) {
+    throw new Error("Negative bigint cannot be encoded as hex quantity");
+  }
+
+  return `0x${value.toString(16)}`;
+};
+
+export const hexToBigInt = (value: HexString): bigint => (value === "0x" ? 0n : BigInt(value));
+
+export const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
+export const PRIVATE_KEY_PATTERN = /^0x[a-fA-F0-9]{64}$/;
+export const HEX_BYTES_PATTERN = /^0x(?:[a-fA-F0-9]{2})*$/;
+export const UINT128_MAX = (1n << 128n) - 1n;
+export const WEI_PER_ETH = 10n ** 18n;
+
+export const parsePositiveIntegerWithFallback = (
+  value: string | undefined,
+  fallback: number,
+): number => {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return parsed;
+};
 
 const PAYMASTER_ADDRESS_END = 42;
 const PAYMASTER_VALIDATION_GAS_END = 74;
@@ -191,7 +239,7 @@ export const normalizePaymasterAndData = ({
 // Servo ERC-20 mode paymaster encoding (Pimlico SingletonPaymasterV7)
 // ---------------------------------------------------------------
 
-const UINT48_MAX = (1n << 48n) - 1n;
+export const UINT48_MAX = (1n << 48n) - 1n;
 const UINT256_MAX = (1n << 256n) - 1n;
 
 const toHexPadded = (value: bigint, byteSize: number, fieldName: string): string => {

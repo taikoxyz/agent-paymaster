@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import type { BundlerClient } from "./bundler-client.js";
 import { EntryPointMonitor } from "./entrypoint-monitor.js";
 import { createApp, validateConfig } from "./index.js";
-import { StaticPriceProvider } from "./paymaster-service.js";
+import { StaticPriceProvider } from "./test-helpers.js";
 import { FixedWindowRateLimiter } from "./rate-limit.js";
-import type { JsonRpcRequest, JsonRpcResponse } from "./types.js";
+import type { JsonRpcRequest, JsonRpcResponse } from "@agent-paymaster/shared";
 
 const ENTRY_POINT_V07 = "0x0000000071727de22e5e9d8baf0edac6f37da032";
 const TEST_QUOTE_SIGNER_PRIVATE_KEY = `0x${"2".repeat(64)}` as const;

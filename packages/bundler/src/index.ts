@@ -1,72 +1,81 @@
 import {
+  ADDRESS_PATTERN,
+  bigIntToHex,
   buildHealth,
-  normalizePaymasterAndData,
+  DEFAULT_TAIKO_RPC_URL,
+  hexToBigInt,
+  logEvent,
+  makeJsonRpcError,
+  makeJsonRpcResult,
+  parsePositiveIntegerWithFallback,
+  PRIVATE_KEY_PATTERN,
+  RPC_INTERNAL_ERROR,
+  RPC_INVALID_PARAMS,
+  RPC_METHOD_NOT_FOUND,
+  RPC_PARSE_ERROR,
+  RPC_RESOURCE_UNAVAILABLE,
   SERVO_SUPPORTED_ENTRY_POINTS,
-  SERVO_TAIKO_ENTRY_POINT_V07,
+  type HexString,
+  type JsonRpcResponse,
 } from "@agent-paymaster/shared";
 import { serve } from "@hono/node-server";
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
-import { createPublicClient, http, type Chain } from "viem";
+import type { Chain } from "viem";
 import { taiko, taikoHoodi } from "viem/chains";
+import { SenderReputationTracker } from "./reputation.js";
 
-import {
-  buildCanonicalUserOpHash,
-  ENTRY_POINT_SIMULATION_ABI,
-  classifySimulationValidation,
-  extractSimulationPreOpGas,
-  packUserOperation,
-} from "./entrypoint.js";
-import { logEvent } from "./logger.js";
+import { buildCanonicalUserOpHash } from "./entrypoint.js";
 import { BundlerPersistenceStore } from "./persistence.js";
+import {
+  assertEntryPointSupported,
+  BundlerRpcError,
+  getBytesLength,
+  normalizeAddress,
+  parseBundleSubmission,
+  parseEntryPoint,
+  parseHashField,
+  parseJsonRpcRequest,
+  parsePositionalParams,
+  parseSendUserOperationParams,
+  parseUserOperation,
+} from "./rpc-parsing.js";
+import {
+  buildAgeBucketCounts,
+  incrementReasonCounter,
+  reasonCountersToRecord,
+  recordAgeBucket,
+} from "./metrics.js";
+import { ViemAdmissionSimulator, ViemCallGasEstimator, ViemGasSimulator } from "./simulators.js";
 import { type BundlerSubmitterHealth, BundlerSubmitter } from "./submitter.js";
+import type {
+  AdmissionSimulator,
+  CallGasEstimator,
+  ClaimedUserOperation,
+  ClaimedUserOperations,
+  GasSimulator,
+  UserOperation,
+  UserOperationGasEstimate,
+  UserOperationReceiptLog,
+} from "./types.js";
 
-export type HexString = `0x${string}`;
-export type JsonRpcId = string | number | null;
-
-const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
-const HEX_PATTERN = /^0x[0-9a-fA-F]*$/;
-const PRIVATE_KEY_PATTERN = /^0x[a-fA-F0-9]{64}$/;
-
-const RPC_PARSE_ERROR = -32700;
-const RPC_INVALID_REQUEST = -32600;
-const RPC_METHOD_NOT_FOUND = -32601;
-const RPC_INVALID_PARAMS = -32602;
-const RPC_INTERNAL_ERROR = -32603;
-const RPC_RESOURCE_UNAVAILABLE = -32001;
+export type { HexString } from "@agent-paymaster/shared";
+export type {
+  AdmissionSimulator,
+  CallGasEstimator,
+  ClaimedUserOperation,
+  ClaimedUserOperations,
+  GasSimulator,
+  UserOperation,
+  UserOperationGasEstimate,
+  UserOperationReceiptLog,
+} from "./types.js";
 
 const REPUTATION_THROTTLE_FAILURES = 3;
 const REPUTATION_BAN_FAILURES = 5;
 const DEFAULT_REPUTATION_WINDOW_MS = 5 * 60 * 1000;
 const DEFAULT_THROTTLE_WINDOW_MS = 10 * 1000;
-const DEFAULT_SUPPORTED_ENTRY_POINTS: HexString[] = Array.isArray(SERVO_SUPPORTED_ENTRY_POINTS)
-  ? [...SERVO_SUPPORTED_ENTRY_POINTS]
-  : [SERVO_TAIKO_ENTRY_POINT_V07];
-
-export interface UserOperation {
-  sender: HexString;
-  nonce: HexString;
-  initCode: HexString;
-  callData: HexString;
-  callGasLimit?: HexString;
-  verificationGasLimit?: HexString;
-  preVerificationGas?: HexString;
-  paymasterVerificationGasLimit?: HexString;
-  paymasterPostOpGasLimit?: HexString;
-  maxFeePerGas: HexString;
-  maxPriorityFeePerGas: HexString;
-  paymasterAndData?: HexString;
-  signature: HexString;
-  l1DataGas?: HexString;
-}
-
-export interface UserOperationGasEstimate {
-  callGasLimit: HexString;
-  verificationGasLimit: HexString;
-  preVerificationGas: HexString;
-  paymasterVerificationGasLimit: HexString;
-  paymasterPostOpGasLimit: HexString;
-}
+const DEFAULT_SUPPORTED_ENTRY_POINTS: HexString[] = [...SERVO_SUPPORTED_ENTRY_POINTS];
 
 export interface UserOperationLookupResult {
   userOperation: UserOperation;
@@ -74,18 +83,6 @@ export interface UserOperationLookupResult {
   transactionHash: string | null;
   blockNumber: HexString | null;
   blockHash: HexString | null;
-}
-
-export interface UserOperationReceiptLog {
-  address: HexString;
-  data: HexString;
-  topics: readonly HexString[];
-  blockHash?: HexString;
-  blockNumber?: HexString;
-  transactionHash?: HexString;
-  transactionIndex?: HexString;
-  logIndex?: HexString;
-  removed?: boolean;
 }
 
 export interface UserOperationReceipt {
@@ -113,54 +110,6 @@ export interface BundlerBundle {
   bundleHash: string;
   entryPoint: string;
   userOperationHashes: string[];
-}
-
-export interface ClaimedUserOperation {
-  hash: string;
-  userOperation: UserOperation;
-  entryPoint: HexString;
-  receivedAt: number;
-  submissionTxHash: HexString | null;
-  submissionStartedAt: number | null;
-}
-
-export interface ClaimedUserOperations {
-  entryPoint: HexString;
-  userOperations: ClaimedUserOperation[];
-}
-
-export interface JsonRpcRequest {
-  jsonrpc: "2.0";
-  id: JsonRpcId;
-  method: string;
-  params?: unknown;
-}
-
-interface JsonRpcError {
-  code: number;
-  message: string;
-  data?: unknown;
-}
-
-export interface JsonRpcSuccess<T = unknown> {
-  jsonrpc: "2.0";
-  id: JsonRpcId;
-  result: T;
-}
-
-export interface JsonRpcFailure {
-  jsonrpc: "2.0";
-  id: JsonRpcId;
-  error: JsonRpcError;
-}
-
-export type JsonRpcResponse = JsonRpcSuccess | JsonRpcFailure;
-
-interface SenderReputation {
-  failures: number;
-  windowStartedAt: number | null;
-  throttledUntil: number | null;
-  bannedUntil: number | null;
 }
 
 interface StoredUserOperation {
@@ -208,12 +157,6 @@ export interface BundlerOperationalMetrics {
   averageAcceptanceToInclusionMs: number;
   simulationFailureReasons: Record<string, number>;
   revertReasons: Record<string, number>;
-}
-
-interface BundlerRpcErrorData {
-  method?: string;
-  reason?: string;
-  [key: string]: unknown;
 }
 
 export interface BundlerPersistence {
@@ -339,298 +282,6 @@ interface BundlerConfig {
   maxFinalizedOperations: number;
 }
 
-export interface GasSimulator {
-  estimatePreOpGas(
-    userOperation: UserOperation,
-    entryPoint: HexString,
-    baseline: UserOperationGasEstimate,
-  ): Promise<bigint>;
-}
-
-export interface CallGasEstimator {
-  estimateCallGas(
-    sender: HexString,
-    callData: HexString,
-    entryPoint: HexString,
-  ): Promise<bigint | null>;
-}
-
-export interface AdmissionSimulator {
-  simulateValidation(userOperation: UserOperation, entryPoint: HexString): Promise<void>;
-}
-
-interface SendUserOperationParamsInput {
-  userOperation: unknown;
-  entryPoint: unknown;
-}
-
-interface ParsedSendUserOperationParams {
-  userOperation: UserOperation;
-  entryPoint: HexString;
-}
-
-interface BundleSubmission {
-  transactionHash: HexString;
-  blockNumber: number;
-  blockHash: HexString;
-  gasUsed: HexString;
-  gasCost: HexString;
-  effectiveGasPrice?: HexString;
-  success?: boolean;
-  reason?: string;
-  revertReason?: string;
-  logs?: UserOperationReceiptLog[];
-}
-
-const MEMPOOL_AGE_BUCKETS_MS = [30_000, 60_000, 300_000, 900_000] as const;
-
-const buildAgeBucketKeys = (): string[] => [
-  ...MEMPOOL_AGE_BUCKETS_MS.map((bucket) => `le_${bucket}ms`),
-  `gt_${MEMPOOL_AGE_BUCKETS_MS[MEMPOOL_AGE_BUCKETS_MS.length - 1]}ms`,
-];
-
-const buildAgeBucketCounts = (): Record<string, number> =>
-  Object.fromEntries(buildAgeBucketKeys().map((key) => [key, 0]));
-
-const recordAgeBucket = (buckets: Record<string, number>, ageMs: number): void => {
-  for (const bucket of MEMPOOL_AGE_BUCKETS_MS) {
-    if (ageMs <= bucket) {
-      buckets[`le_${bucket}ms`] += 1;
-      return;
-    }
-  }
-
-  buckets[`gt_${MEMPOOL_AGE_BUCKETS_MS[MEMPOOL_AGE_BUCKETS_MS.length - 1]}ms`] += 1;
-};
-
-const incrementReasonCounter = (counters: Map<string, number>, reason: string): void => {
-  const normalized = reason.trim().replaceAll(/\s+/g, "_").slice(0, 120) || "unknown";
-  counters.set(normalized, (counters.get(normalized) ?? 0) + 1);
-};
-
-const reasonCountersToRecord = (counters: Map<string, number>): Record<string, number> =>
-  Object.fromEntries([...counters.entries()].sort(([left], [right]) => left.localeCompare(right)));
-
-class BundlerRpcError extends Error {
-  readonly code: number;
-  readonly data?: BundlerRpcErrorData;
-
-  constructor(code: number, message: string, data?: BundlerRpcErrorData) {
-    super(message);
-    this.name = "BundlerRpcError";
-    this.code = code;
-    this.data = data;
-  }
-}
-
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null;
-
-const isJsonRpcId = (value: unknown): value is JsonRpcId =>
-  typeof value === "string" || typeof value === "number" || value === null;
-
-const normalizeHex = (value: string): HexString => {
-  if (!HEX_PATTERN.test(value)) {
-    throw new BundlerRpcError(RPC_INVALID_PARAMS, "Expected a hex string", {
-      reason: "hex_required",
-    });
-  }
-
-  return value.toLowerCase() as HexString;
-};
-
-const hexToBigInt = (value: string): bigint => {
-  const normalized = normalizeHex(value);
-  if (normalized === "0x") {
-    return 0n;
-  }
-
-  return BigInt(normalized);
-};
-
-const bigIntToHex = (value: bigint): HexString => {
-  if (value < 0n) {
-    throw new Error("Negative bigint cannot be encoded as hex quantity");
-  }
-
-  return `0x${value.toString(16)}`;
-};
-
-const normalizeAddress = (value: string): HexString => {
-  if (!ADDRESS_PATTERN.test(value)) {
-    throw new BundlerRpcError(RPC_INVALID_PARAMS, "Expected a valid address", {
-      reason: "address_invalid",
-    });
-  }
-
-  return value.toLowerCase() as HexString;
-};
-
-const parseOptionalHexQuantity = (value: unknown, fieldName: string): HexString | undefined => {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  return parseHexField(value, fieldName);
-};
-
-const parseHashField = (value: unknown, fieldName: string): HexString => {
-  const normalized = parseHexField(value, fieldName);
-  if (normalized.length !== 66) {
-    throw new BundlerRpcError(RPC_INVALID_PARAMS, `${fieldName} must be 32 bytes`, {
-      reason: "hash_invalid_length",
-      field: fieldName,
-    });
-  }
-
-  return normalized;
-};
-
-const parseReceiptLog = (logInput: unknown, index: number): UserOperationReceiptLog => {
-  if (!isObject(logInput)) {
-    throw new BundlerRpcError(RPC_INVALID_PARAMS, `logs[${index}] must be an object`, {
-      reason: "submission_log_invalid",
-      field: `logs[${index}]`,
-    });
-  }
-
-  if (!Array.isArray(logInput.topics)) {
-    throw new BundlerRpcError(RPC_INVALID_PARAMS, `logs[${index}].topics must be an array`, {
-      reason: "submission_log_topics_invalid",
-      field: `logs[${index}].topics`,
-    });
-  }
-
-  return {
-    address: normalizeAddress(String(logInput.address)),
-    data: parseHexField(logInput.data, `logs[${index}].data`),
-    topics: logInput.topics.map((topic, topicIndex) =>
-      parseHexField(topic, `logs[${index}].topics[${topicIndex}]`),
-    ),
-    blockHash:
-      logInput.blockHash === undefined
-        ? undefined
-        : parseHashField(logInput.blockHash, `logs[${index}].blockHash`),
-    blockNumber: parseOptionalHexQuantity(logInput.blockNumber, `logs[${index}].blockNumber`),
-    transactionHash:
-      logInput.transactionHash === undefined
-        ? undefined
-        : parseHashField(logInput.transactionHash, `logs[${index}].transactionHash`),
-    transactionIndex: parseOptionalHexQuantity(
-      logInput.transactionIndex,
-      `logs[${index}].transactionIndex`,
-    ),
-    logIndex: parseOptionalHexQuantity(logInput.logIndex, `logs[${index}].logIndex`),
-    removed: logInput.removed === undefined ? undefined : Boolean(logInput.removed),
-  };
-};
-
-const getBytesLength = (hexValue: string): bigint => {
-  const normalized = normalizeHex(hexValue);
-  const payload = normalized.slice(2);
-
-  if (payload.length % 2 !== 0) {
-    throw new BundlerRpcError(RPC_INVALID_PARAMS, "Hex values must have even length", {
-      reason: "hex_length_invalid",
-    });
-  }
-
-  return BigInt(payload.length / 2);
-};
-
-const makeJsonRpcError = (
-  id: JsonRpcId,
-  code: number,
-  message: string,
-  data?: BundlerRpcErrorData,
-): JsonRpcFailure => ({
-  jsonrpc: "2.0",
-  id,
-  error: data ? { code, message, data } : { code, message },
-});
-
-const makeJsonRpcResult = <T>(id: JsonRpcId, result: T): JsonRpcSuccess<T> => ({
-  jsonrpc: "2.0",
-  id,
-  result,
-});
-
-const parseHexField = (value: unknown, fieldName: string, optional = false): HexString => {
-  if (value === undefined || value === null) {
-    if (optional) {
-      return "0x";
-    }
-
-    throw new BundlerRpcError(RPC_INVALID_PARAMS, `Missing required field: ${fieldName}`, {
-      reason: "field_missing",
-      field: fieldName,
-    });
-  }
-
-  if (typeof value !== "string") {
-    throw new BundlerRpcError(RPC_INVALID_PARAMS, `Field ${fieldName} must be a hex string`, {
-      reason: "field_invalid_type",
-      field: fieldName,
-    });
-  }
-
-  return normalizeHex(value);
-};
-
-/**
- * Resolves initCode from either:
- * - v0.7 RPC format: `factory` + `factoryData` (separate fields, per ERC-4337 spec)
- * - Legacy packed format: `initCode` (factory address concatenated with factoryData)
- * - Neither provided: defaults to "0x" (existing account, no deployment)
- */
-const resolveInitCode = (input: Record<string, unknown>): HexString => {
-  const hasInitCode = input.initCode !== undefined && input.initCode !== null;
-  const hasFactory = input.factory !== undefined && input.factory !== null;
-
-  if (hasInitCode && hasFactory) {
-    throw new BundlerRpcError(
-      RPC_INVALID_PARAMS,
-      "Provide either initCode or factory/factoryData, not both",
-      { reason: "initcode_ambiguous" },
-    );
-  }
-
-  if (hasFactory) {
-    const factory = parseHexField(input.factory, "factory");
-    if (factory === "0x") {
-      return "0x";
-    }
-    if (factory.length !== 42) {
-      throw new BundlerRpcError(RPC_INVALID_PARAMS, "factory must be a 20-byte address", {
-        reason: "factory_invalid_length",
-      });
-    }
-    const factoryData = parseHexField(input.factoryData, "factoryData", true);
-    // Pack: factory (20 bytes) || factoryData
-    return `${factory}${factoryData.slice(2)}` as HexString;
-  }
-
-  if (hasInitCode) {
-    return parseHexField(input.initCode, "initCode");
-  }
-
-  // No factory and no initCode — existing account
-  return "0x";
-};
-
-const parsePositiveIntegerWithFallback = (value: string | undefined, fallback: number): number => {
-  if (value === undefined) {
-    return fallback;
-  }
-
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    return fallback;
-  }
-
-  return parsed;
-};
-
 const parseBigIntWithFallback = (value: string | undefined, fallback: bigint): bigint => {
   if (value === undefined) {
     return fallback;
@@ -655,146 +306,14 @@ const resolveChainById = (chainId: number): Chain | undefined => {
   }
 };
 
-export class ViemGasSimulator implements GasSimulator {
-  private readonly publicClient;
-
-  constructor(rpcUrl: string, chain?: Chain) {
-    this.publicClient = createPublicClient({
-      chain,
-      transport: http(rpcUrl),
-    });
-  }
-
-  async estimatePreOpGas(
-    userOperation: UserOperation,
-    entryPoint: HexString,
-    baseline: UserOperationGasEstimate,
-  ): Promise<bigint> {
-    const simulationUserOperation: UserOperation = {
-      ...userOperation,
-      callGasLimit: baseline.callGasLimit,
-      verificationGasLimit: baseline.verificationGasLimit,
-      preVerificationGas: baseline.preVerificationGas,
-      paymasterVerificationGasLimit: baseline.paymasterVerificationGasLimit,
-      paymasterPostOpGasLimit: baseline.paymasterPostOpGasLimit,
-      paymasterAndData: userOperation.paymasterAndData ?? "0x",
-    };
-
-    try {
-      await this.publicClient.simulateContract({
-        address: entryPoint,
-        abi: ENTRY_POINT_SIMULATION_ABI,
-        functionName: "simulateValidation",
-        args: [packUserOperation(simulationUserOperation)],
-      });
-    } catch (error) {
-      const preOpGas = extractSimulationPreOpGas(error);
-      if (preOpGas !== null) {
-        return preOpGas;
-      }
-
-      throw error;
-    }
-
-    throw new Error("simulateValidation unexpectedly succeeded without revert");
-  }
-}
-
-export class ViemCallGasEstimator implements CallGasEstimator {
-  private readonly publicClient;
-  private readonly bufferPercent: bigint;
-
-  constructor(rpcUrl: string, chain?: Chain, bufferPercent = 15n) {
-    this.publicClient = createPublicClient({
-      chain,
-      transport: http(rpcUrl),
-    });
-    this.bufferPercent = bufferPercent;
-  }
-
-  async estimateCallGas(
-    sender: HexString,
-    callData: HexString,
-    entryPoint: HexString,
-  ): Promise<bigint | null> {
-    // Skip estimation for empty callData (no inner execution)
-    if (callData === "0x" || callData === "0x00") {
-      return null;
-    }
-
-    // Check if sender contract exists (undeployed accounts can't be simulated)
-    const code = await this.publicClient.getCode({ address: sender });
-    if (code === undefined || code === "0x") {
-      return null;
-    }
-
-    try {
-      const estimatedGas = await this.publicClient.estimateGas({
-        account: entryPoint,
-        to: sender,
-        data: callData,
-      });
-
-      // Apply safety buffer for EntryPoint overhead:
-      // - 1/64 gas lost at EntryPoint → account call boundary (EIP-150)
-      // - EntryPoint bookkeeping gas around the call (~3-5K)
-      const buffered = estimatedGas + (estimatedGas * this.bufferPercent) / 100n;
-      return buffered;
-    } catch (error) {
-      logEvent("warn", "bundler.call_gas_estimation_failed", {
-        sender,
-        reason: error instanceof Error ? error.message : "estimation_failed",
-      });
-      return null;
-    }
-  }
-}
-
-export class ViemAdmissionSimulator implements AdmissionSimulator {
-  private readonly publicClient;
-
-  constructor(rpcUrl: string, chain?: Chain) {
-    this.publicClient = createPublicClient({
-      chain,
-      transport: http(rpcUrl),
-    });
-  }
-
-  async simulateValidation(userOperation: UserOperation, entryPoint: HexString): Promise<void> {
-    try {
-      await this.publicClient.simulateContract({
-        address: entryPoint,
-        abi: ENTRY_POINT_SIMULATION_ABI,
-        functionName: "simulateValidation",
-        args: [packUserOperation(userOperation)],
-      });
-    } catch (error) {
-      const classified = classifySimulationValidation(error);
-      if (classified?.success) {
-        return;
-      }
-
-      if (classified && !classified.success) {
-        throw new Error(classified.reason);
-      }
-
-      // v0.7 EntryPoint does not expose simulateValidation on the production
-      // contract (it lives on EntryPointSimulations). When the revert data
-      // cannot be decoded, pass through and let the submitter catch issues
-      // during handleOps simulation.
-      return;
-    }
-
-    throw new Error("simulateValidation unexpectedly succeeded without revert");
-  }
-}
+export { ViemAdmissionSimulator, ViemCallGasEstimator, ViemGasSimulator } from "./simulators.js";
 
 export class BundlerService {
   readonly config: BundlerConfig;
 
   private readonly userOperations = new Map<string, StoredUserOperation>();
   private readonly bundles = new Map<string, string[]>();
-  private readonly senderReputation = new Map<string, SenderReputation>();
+  private readonly reputation: SenderReputationTracker;
   private readonly persistence?: BundlerPersistence;
   private readonly gasSimulator?: GasSimulator;
   private readonly callGasEstimator?: CallGasEstimator;
@@ -834,6 +353,7 @@ export class BundlerService {
       callGasHeuristicMultiplier: config.callGasHeuristicMultiplier ?? 3n,
       maxFinalizedOperations: config.maxFinalizedOperations ?? 10_000,
     };
+    this.reputation = new SenderReputationTracker(this.config, persistence);
     this.gasSimulator = config.gasSimulator;
     this.callGasEstimator = config.callGasEstimator;
     this.admissionSimulator = config.admissionSimulator;
@@ -884,7 +404,7 @@ export class BundlerService {
     }
 
     for (const reputation of persistence.loadSenderReputations()) {
-      this.senderReputation.set(reputation.sender, {
+      this.reputation.load(reputation.sender, {
         failures: reputation.failures,
         windowStartedAt: reputation.windowStartedAt ?? Date.now(),
         throttledUntil: reputation.throttledUntil,
@@ -937,11 +457,7 @@ export class BundlerService {
       }
     }
 
-    for (const reputation of this.senderReputation.values()) {
-      if (reputation.bannedUntil !== null && reputation.bannedUntil > now) {
-        bannedSenders += 1;
-      }
-    }
+    bannedSenders = this.reputation.countBannedSenders(now);
 
     const acceptanceToInclusionSuccessRate =
       this.userOpsAcceptedTotal === 0 ? 0 : this.userOpsIncludedTotal / this.userOpsAcceptedTotal;
@@ -1020,10 +536,10 @@ export class BundlerService {
     userOperationInput: unknown,
     entryPointInput: unknown,
   ): Promise<UserOperationGasEstimate> {
-    const userOperation = this.parseUserOperation(userOperationInput);
-    const entryPoint = this.parseEntryPoint(entryPointInput);
+    const userOperation = parseUserOperation(userOperationInput, this.config.chainId);
+    const entryPoint = parseEntryPoint(entryPointInput);
 
-    this.assertEntryPointSupported(entryPoint);
+    assertEntryPointSupported(entryPoint, this.config.entryPoints);
 
     const callDataBytes = getBytesLength(userOperation.callData);
     const initCodeBytes = getBytesLength(userOperation.initCode);
@@ -1152,20 +668,24 @@ export class BundlerService {
       );
     }
 
-    const parsed = this.parseSendUserOperationParams({
-      userOperation: userOperationInput,
-      entryPoint: entryPointInput,
-    });
+    const parsed = parseSendUserOperationParams(
+      { userOperation: userOperationInput, entryPoint: entryPointInput },
+      this.config.chainId,
+    );
 
     const preparedUserOperation = await this.prepareUserOperationForAdmission(
       parsed.userOperation,
       parsed.entryPoint,
     );
 
-    this.ensureSenderCanSubmit(preparedUserOperation.sender);
-    this.assertEntryPointSupported(parsed.entryPoint);
+    this.reputation.ensureCanSubmit(preparedUserOperation.sender);
+    assertEntryPointSupported(parsed.entryPoint, this.config.entryPoints);
 
-    const userOpHash = this.buildUserOpHash(preparedUserOperation, parsed.entryPoint);
+    const userOpHash = buildCanonicalUserOpHash(
+      preparedUserOperation,
+      parsed.entryPoint,
+      this.config.chainId,
+    );
     const matchingPendingOperation = this.findOpenOperationBySenderAndNonce(
       preparedUserOperation.sender,
       hexToBigInt(preparedUserOperation.nonce),
@@ -1197,7 +717,7 @@ export class BundlerService {
         await this.admissionSimulator.simulateValidation(preparedUserOperation, parsed.entryPoint);
       } catch (error) {
         const reason = error instanceof Error ? error.message : "validation_failed";
-        this.recordDeterministicValidationFailure(preparedUserOperation.sender);
+        this.reputation.recordDeterministicFailure(preparedUserOperation.sender);
         throw new BundlerRpcError(
           RPC_INVALID_PARAMS,
           `UserOperation validation failed: ${reason}`,
@@ -1234,7 +754,7 @@ export class BundlerService {
   }
 
   getUserOperationByHash(userOpHashInput: unknown): UserOperationLookupResult | null {
-    const userOpHash = this.parseUserOpHash(userOpHashInput);
+    const userOpHash = parseHashField(userOpHashInput, "userOpHash");
     const operation = this.userOperations.get(userOpHash);
     if (!operation) {
       return null;
@@ -1251,7 +771,7 @@ export class BundlerService {
   }
 
   getUserOperationReceipt(userOpHashInput: unknown): UserOperationReceipt | null {
-    const userOpHash = this.parseUserOpHash(userOpHashInput);
+    const userOpHash = parseHashField(userOpHashInput, "userOpHash");
     const operation = this.userOperations.get(userOpHash);
 
     if (
@@ -1339,7 +859,7 @@ export class BundlerService {
 
   releaseUserOperations(userOpHashesInput: unknown[]): void {
     for (const input of userOpHashesInput) {
-      const userOpHash = this.parseUserOpHash(input);
+      const userOpHash = parseHashField(input, "userOpHash");
       const operation = this.userOperations.get(userOpHash);
       if (!operation || operation.state !== "submitting") {
         continue;
@@ -1358,11 +878,11 @@ export class BundlerService {
     userOpHashesInput: unknown[],
     transactionHashInput: unknown,
   ): void {
-    const transactionHash = this.parseHash(transactionHashInput, "transactionHash") as HexString;
+    const transactionHash = parseHashField(transactionHashInput, "transactionHash") as HexString;
     const userOpHashes: string[] = [];
 
     for (const input of userOpHashesInput) {
-      const userOpHash = this.parseUserOpHash(input);
+      const userOpHash = parseHashField(input, "userOpHash");
       const operation = this.userOperations.get(userOpHash);
       if (!operation || operation.state !== "submitting") {
         continue;
@@ -1380,7 +900,7 @@ export class BundlerService {
   }
 
   finalizeUserOperation(userOpHashInput: unknown, submissionInput: unknown): void {
-    const userOpHash = this.parseUserOpHash(userOpHashInput);
+    const userOpHash = parseHashField(userOpHashInput, "userOpHash");
     const operation = this.userOperations.get(userOpHash);
 
     if (!operation) {
@@ -1389,7 +909,7 @@ export class BundlerService {
       });
     }
 
-    const submission = this.parseBundleSubmission(submissionInput);
+    const submission = parseBundleSubmission(submissionInput);
     const gasUsed = hexToBigInt(submission.gasUsed);
     const gasCost = hexToBigInt(submission.gasCost);
     const gasPrice = submission.effectiveGasPrice
@@ -1434,7 +954,7 @@ export class BundlerService {
       this.userOpsIncludedTotal += 1;
       this.inclusionLatencySampleCount += 1;
       this.inclusionLatencyTotalMs += finalizationLatencyMs;
-      this.clearSenderReputation(operation.userOperation.sender);
+      this.reputation.clear(operation.userOperation.sender);
     } else {
       this.userOpsFailedTotal += 1;
       incrementReasonCounter(
@@ -1457,7 +977,9 @@ export class BundlerService {
     const userOperationHashes = claim.userOperations.map((operation) => operation.hash);
     const sequence = this.bundleSequence;
     this.bundleSequence += 1;
-    const bundleHash = this.buildDeterministicHash(`${sequence}:${userOperationHashes.join(":")}`);
+    const bundleHash = `0x${createHash("sha256")
+      .update(`${sequence}:${userOperationHashes.join(":")}`)
+      .digest("hex")}`;
 
     for (const operation of claim.userOperations) {
       const stored = this.userOperations.get(operation.hash);
@@ -1474,7 +996,7 @@ export class BundlerService {
   }
 
   markBundleSubmitted(bundleHashInput: unknown, submissionInput: unknown): void {
-    const bundleHash = this.parseHash(bundleHashInput, "bundleHash");
+    const bundleHash = parseHashField(bundleHashInput, "bundleHash");
     const operationHashes = this.bundles.get(bundleHash);
 
     if (!operationHashes) {
@@ -1491,7 +1013,7 @@ export class BundlerService {
   }
 
   markUserOperationFailed(userOpHashInput: unknown, reason = "simulation_failed"): void {
-    const userOpHash = this.parseUserOpHash(userOpHashInput);
+    const userOpHash = parseHashField(userOpHashInput, "userOpHash");
     const operation = this.userOperations.get(userOpHash);
 
     if (!operation) {
@@ -1515,7 +1037,7 @@ export class BundlerService {
     operation.finalizedAt = Date.now();
     this.userOpsFailedTotal += 1;
     incrementReasonCounter(this.simulationFailureReasons, reason);
-    this.recordDeterministicValidationFailure(operation.userOperation.sender);
+    this.reputation.recordDeterministicFailure(operation.userOperation.sender);
     this.persistFinalizedOperation(operation);
     this.persistence?.removePendingOperation(userOpHash);
     this.enforceFinalizedRetention();
@@ -1668,7 +1190,7 @@ export class BundlerService {
   }
 
   async handleJsonRpc(payload: unknown): Promise<JsonRpcResponse> {
-    const parsed = this.parseJsonRpcRequest(payload);
+    const parsed = parseJsonRpcRequest(payload);
 
     if (!parsed.ok) {
       return makeJsonRpcError(parsed.id, parsed.code, parsed.message, parsed.data);
@@ -1682,7 +1204,7 @@ export class BundlerService {
           return makeJsonRpcResult(request.id, this.getSupportedEntryPoints());
         }
         case "eth_estimateUserOperationGas": {
-          const [userOperation, entryPoint] = this.parsePositionalParams(
+          const [userOperation, entryPoint] = parsePositionalParams(
             request.method,
             request.params,
             2,
@@ -1691,7 +1213,7 @@ export class BundlerService {
           return makeJsonRpcResult(request.id, result);
         }
         case "eth_sendUserOperation": {
-          const [userOperation, entryPoint] = this.parsePositionalParams(
+          const [userOperation, entryPoint] = parsePositionalParams(
             request.method,
             request.params,
             2,
@@ -1700,11 +1222,11 @@ export class BundlerService {
           return makeJsonRpcResult(request.id, hash);
         }
         case "eth_getUserOperationByHash": {
-          const [userOpHash] = this.parsePositionalParams(request.method, request.params, 1);
+          const [userOpHash] = parsePositionalParams(request.method, request.params, 1);
           return makeJsonRpcResult(request.id, this.getUserOperationByHash(userOpHash));
         }
         case "eth_getUserOperationReceipt": {
-          const [userOpHash] = this.parsePositionalParams(request.method, request.params, 1);
+          const [userOpHash] = parsePositionalParams(request.method, request.params, 1);
           return makeJsonRpcResult(request.id, this.getUserOperationReceipt(userOpHash));
         }
         default:
@@ -1721,459 +1243,6 @@ export class BundlerService {
         reason: "unhandled_exception",
       });
     }
-  }
-
-  private parseJsonRpcRequest(
-    payload: unknown,
-  ):
-    | { ok: true; request: JsonRpcRequest }
-    | { ok: false; id: JsonRpcId; code: number; message: string; data?: BundlerRpcErrorData } {
-    if (!isObject(payload)) {
-      return {
-        ok: false,
-        id: null,
-        code: RPC_INVALID_REQUEST,
-        message: "Invalid Request",
-        data: { reason: "payload_not_object" },
-      };
-    }
-
-    const id: JsonRpcId = isJsonRpcId(payload.id) ? payload.id : null;
-
-    if (payload.jsonrpc !== "2.0" || typeof payload.method !== "string") {
-      return {
-        ok: false,
-        id,
-        code: RPC_INVALID_REQUEST,
-        message: "Invalid Request",
-        data: { reason: "jsonrpc_shape_invalid" },
-      };
-    }
-
-    return {
-      ok: true,
-      request: {
-        jsonrpc: "2.0",
-        id,
-        method: payload.method,
-        params: payload.params,
-      },
-    };
-  }
-
-  private parsePositionalParams(method: string, params: unknown, expectedCount: number): unknown[] {
-    if (!Array.isArray(params)) {
-      throw new BundlerRpcError(RPC_INVALID_PARAMS, "Method params must be an array", {
-        reason: "params_not_array",
-        method,
-      });
-    }
-
-    if (params.length < expectedCount) {
-      throw new BundlerRpcError(RPC_INVALID_PARAMS, "Missing required positional params", {
-        reason: "params_missing",
-        method,
-        expectedCount,
-      });
-    }
-
-    return params;
-  }
-
-  private parseSendUserOperationParams(
-    input: SendUserOperationParamsInput,
-  ): ParsedSendUserOperationParams {
-    return {
-      userOperation: this.parseUserOperation(input.userOperation),
-      entryPoint: this.parseEntryPoint(input.entryPoint),
-    };
-  }
-
-  private parseEntryPoint(entryPointInput: unknown): HexString {
-    if (typeof entryPointInput !== "string") {
-      throw new BundlerRpcError(RPC_INVALID_PARAMS, "entryPoint must be a string", {
-        reason: "entrypoint_invalid_type",
-      });
-    }
-
-    return normalizeAddress(entryPointInput);
-  }
-
-  private parseOptionalChainId(chainIdInput: unknown): number | null {
-    if (chainIdInput === undefined || chainIdInput === null) {
-      return null;
-    }
-
-    if (typeof chainIdInput === "number" && Number.isInteger(chainIdInput) && chainIdInput >= 0) {
-      return chainIdInput;
-    }
-
-    if (typeof chainIdInput === "bigint" && chainIdInput >= 0n) {
-      return Number(chainIdInput);
-    }
-
-    if (typeof chainIdInput === "string") {
-      const trimmed = chainIdInput.trim();
-      if (trimmed.length === 0) {
-        throw new BundlerRpcError(RPC_INVALID_PARAMS, "userOperation.chainId must not be empty", {
-          reason: "chain_id_invalid",
-        });
-      }
-
-      const parsed =
-        trimmed.startsWith("0x") || trimmed.startsWith("0X")
-          ? Number.parseInt(trimmed, 16)
-          : Number.parseInt(trimmed, 10);
-      if (Number.isInteger(parsed) && parsed >= 0) {
-        return parsed;
-      }
-    }
-
-    throw new BundlerRpcError(RPC_INVALID_PARAMS, "userOperation.chainId must be an integer", {
-      reason: "chain_id_invalid",
-    });
-  }
-
-  private parseUserOperation(userOperationInput: unknown): UserOperation {
-    if (!isObject(userOperationInput)) {
-      throw new BundlerRpcError(RPC_INVALID_PARAMS, "userOperation must be an object", {
-        reason: "userop_not_object",
-      });
-    }
-
-    if (typeof userOperationInput.sender !== "string") {
-      throw new BundlerRpcError(RPC_INVALID_PARAMS, "userOperation.sender is required", {
-        reason: "sender_missing",
-      });
-    }
-
-    const sender = normalizeAddress(userOperationInput.sender);
-    const chainId = this.parseOptionalChainId(userOperationInput.chainId);
-    if (chainId !== null && chainId !== this.config.chainId) {
-      throw new BundlerRpcError(
-        RPC_INVALID_PARAMS,
-        `userOperation.chainId must match bundler chainId (${this.config.chainId})`,
-        {
-          reason: "chain_id_mismatch",
-          expectedChainId: this.config.chainId,
-          submittedChainId: chainId,
-        },
-      );
-    }
-
-    // ERC-4337 v0.7 RPC format uses separate factory/factoryData fields.
-    // Also accept the legacy packed initCode for backwards compatibility.
-    const initCode = resolveInitCode(userOperationInput);
-
-    const userOperation: UserOperation = {
-      sender,
-      nonce: parseHexField(userOperationInput.nonce, "nonce"),
-      initCode,
-      callData: parseHexField(userOperationInput.callData, "callData"),
-      maxFeePerGas: parseHexField(userOperationInput.maxFeePerGas, "maxFeePerGas"),
-      maxPriorityFeePerGas: parseHexField(
-        userOperationInput.maxPriorityFeePerGas,
-        "maxPriorityFeePerGas",
-      ),
-      signature: parseHexField(userOperationInput.signature, "signature"),
-    };
-
-    if (userOperation.signature === "0x") {
-      throw new BundlerRpcError(RPC_INVALID_PARAMS, "userOperation.signature must not be empty", {
-        reason: "signature_empty",
-      });
-    }
-
-    if (userOperationInput.callGasLimit !== undefined) {
-      userOperation.callGasLimit = parseHexField(userOperationInput.callGasLimit, "callGasLimit");
-    }
-
-    if (userOperationInput.verificationGasLimit !== undefined) {
-      userOperation.verificationGasLimit = parseHexField(
-        userOperationInput.verificationGasLimit,
-        "verificationGasLimit",
-      );
-    }
-
-    if (userOperationInput.preVerificationGas !== undefined) {
-      userOperation.preVerificationGas = parseHexField(
-        userOperationInput.preVerificationGas,
-        "preVerificationGas",
-      );
-    }
-
-    if (userOperationInput.paymasterVerificationGasLimit !== undefined) {
-      userOperation.paymasterVerificationGasLimit = parseHexField(
-        userOperationInput.paymasterVerificationGasLimit,
-        "paymasterVerificationGasLimit",
-      );
-    }
-
-    if (userOperationInput.paymasterPostOpGasLimit !== undefined) {
-      userOperation.paymasterPostOpGasLimit = parseHexField(
-        userOperationInput.paymasterPostOpGasLimit,
-        "paymasterPostOpGasLimit",
-      );
-    }
-
-    if (userOperationInput.paymasterAndData !== undefined) {
-      userOperation.paymasterAndData = parseHexField(
-        userOperationInput.paymasterAndData,
-        "paymasterAndData",
-      );
-
-      if (userOperation.paymasterAndData !== "0x" && userOperation.paymasterAndData.length < 42) {
-        throw new BundlerRpcError(
-          RPC_INVALID_PARAMS,
-          "paymasterAndData must include a paymaster address prefix",
-          {
-            reason: "paymaster_data_too_short",
-          },
-        );
-      }
-    }
-
-    if (userOperationInput.l1DataGas !== undefined) {
-      userOperation.l1DataGas = parseHexField(userOperationInput.l1DataGas, "l1DataGas");
-    }
-
-    if (userOperation.paymasterAndData !== undefined && userOperation.paymasterAndData !== "0x") {
-      try {
-        const normalized = normalizePaymasterAndData({
-          paymasterAndData: userOperation.paymasterAndData,
-          paymasterVerificationGasLimit:
-            userOperation.paymasterVerificationGasLimit === undefined
-              ? undefined
-              : hexToBigInt(userOperation.paymasterVerificationGasLimit),
-          paymasterPostOpGasLimit:
-            userOperation.paymasterPostOpGasLimit === undefined
-              ? undefined
-              : hexToBigInt(userOperation.paymasterPostOpGasLimit),
-        });
-
-        userOperation.paymasterAndData = normalized.paymasterAndData;
-        userOperation.paymasterVerificationGasLimit ??= bigIntToHex(
-          normalized.paymasterVerificationGasLimit,
-        );
-        userOperation.paymasterPostOpGasLimit ??= bigIntToHex(normalized.paymasterPostOpGasLimit);
-      } catch (error) {
-        throw new BundlerRpcError(
-          RPC_INVALID_PARAMS,
-          error instanceof Error ? error.message : "Invalid paymasterAndData",
-          {
-            reason: "paymaster_data_invalid",
-          },
-        );
-      }
-    }
-
-    return userOperation;
-  }
-
-  private parseUserOpHash(hashInput: unknown): string {
-    return this.parseHash(hashInput, "userOpHash");
-  }
-
-  private parseHash(hashInput: unknown, fieldName: string): string {
-    if (typeof hashInput !== "string") {
-      throw new BundlerRpcError(RPC_INVALID_PARAMS, `${fieldName} must be a hex string`, {
-        reason: "hash_invalid_type",
-        field: fieldName,
-      });
-    }
-
-    const normalized = normalizeHex(hashInput);
-    if (normalized.length !== 66) {
-      throw new BundlerRpcError(RPC_INVALID_PARAMS, `${fieldName} must be 32 bytes`, {
-        reason: "hash_invalid_length",
-        field: fieldName,
-      });
-    }
-
-    return normalized;
-  }
-
-  private parseBundleSubmission(submissionInput: unknown): BundleSubmission {
-    if (!isObject(submissionInput)) {
-      throw new BundlerRpcError(RPC_INVALID_PARAMS, "Submission payload must be an object", {
-        reason: "submission_invalid",
-      });
-    }
-
-    const transactionHash = this.parseHash(
-      submissionInput.transactionHash,
-      "transactionHash",
-    ) as HexString;
-    const blockHash = this.parseHash(submissionInput.blockHash, "blockHash") as HexString;
-    if (
-      typeof submissionInput.blockNumber !== "number" ||
-      !Number.isInteger(submissionInput.blockNumber) ||
-      submissionInput.blockNumber < 0
-    ) {
-      throw new BundlerRpcError(RPC_INVALID_PARAMS, "blockNumber must be a non-negative integer", {
-        reason: "block_number_invalid",
-      });
-    }
-
-    return {
-      transactionHash,
-      blockNumber: submissionInput.blockNumber,
-      blockHash,
-      gasUsed: parseHexField(submissionInput.gasUsed, "gasUsed"),
-      gasCost: parseHexField(submissionInput.gasCost, "gasCost"),
-      effectiveGasPrice:
-        submissionInput.effectiveGasPrice === undefined
-          ? undefined
-          : parseHexField(submissionInput.effectiveGasPrice, "effectiveGasPrice"),
-      success: submissionInput.success === undefined ? true : Boolean(submissionInput.success),
-      reason: submissionInput.reason === undefined ? undefined : String(submissionInput.reason),
-      revertReason:
-        submissionInput.revertReason === undefined
-          ? undefined
-          : String(submissionInput.revertReason),
-      logs: Array.isArray(submissionInput.logs)
-        ? submissionInput.logs.map((log, index) => parseReceiptLog(log, index))
-        : undefined,
-    };
-  }
-
-  private assertEntryPointSupported(entryPoint: string): void {
-    if (!this.config.entryPoints.includes(entryPoint)) {
-      throw new BundlerRpcError(RPC_INVALID_PARAMS, "Unsupported entry point", {
-        reason: "entrypoint_unsupported",
-        entryPoint,
-      });
-    }
-  }
-
-  private ensureSenderCanSubmit(sender: string): void {
-    const now = Date.now();
-    const reputation = this.getSenderReputation(sender, now);
-    if (!reputation) {
-      return;
-    }
-
-    if (reputation.bannedUntil !== null && reputation.bannedUntil > now) {
-      throw new BundlerRpcError(RPC_RESOURCE_UNAVAILABLE, "Sender is temporarily banned", {
-        reason: "sender_banned",
-        sender,
-        bannedUntil: reputation.bannedUntil,
-      });
-    }
-
-    if (reputation.throttledUntil !== null && reputation.throttledUntil > now) {
-      throw new BundlerRpcError(RPC_RESOURCE_UNAVAILABLE, "Sender is temporarily throttled", {
-        reason: "sender_throttled",
-        sender,
-        throttledUntil: reputation.throttledUntil,
-        retryAfterMs: reputation.throttledUntil - now,
-      });
-    }
-  }
-
-  private getSenderReputation(sender: string, now: number = Date.now()): SenderReputation | null {
-    const reputation = this.senderReputation.get(sender);
-    if (!reputation) {
-      return null;
-    }
-
-    if (
-      reputation.windowStartedAt !== null &&
-      now - reputation.windowStartedAt >= this.config.reputationWindowMs
-    ) {
-      this.clearSenderReputation(sender);
-      return null;
-    }
-
-    let updated = false;
-    if (reputation.bannedUntil !== null && reputation.bannedUntil <= now) {
-      reputation.bannedUntil = null;
-      updated = true;
-    }
-    if (reputation.throttledUntil !== null && reputation.throttledUntil <= now) {
-      reputation.throttledUntil = null;
-      updated = true;
-    }
-
-    if (
-      reputation.failures <= 0 &&
-      reputation.bannedUntil === null &&
-      reputation.throttledUntil === null
-    ) {
-      this.clearSenderReputation(sender);
-      return null;
-    }
-
-    if (updated) {
-      this.saveSenderReputation(sender, reputation);
-    }
-
-    return reputation;
-  }
-
-  private clearSenderReputation(sender: string): void {
-    this.senderReputation.delete(sender);
-    this.persistence?.deleteSenderReputation(sender);
-  }
-
-  private saveSenderReputation(sender: string, reputation: SenderReputation): void {
-    this.persistence?.saveSenderReputation(
-      sender,
-      reputation.failures,
-      reputation.windowStartedAt,
-      reputation.throttledUntil,
-      reputation.bannedUntil,
-    );
-  }
-
-  private recordDeterministicValidationFailure(sender: string): void {
-    const now = Date.now();
-    const current = this.getSenderReputation(sender, now) ?? {
-      failures: 0,
-      windowStartedAt: now,
-      throttledUntil: null,
-      bannedUntil: null,
-    };
-
-    const nextFailures = current.failures + 1;
-    const next: SenderReputation = {
-      failures: nextFailures,
-      windowStartedAt: current.windowStartedAt ?? now,
-      throttledUntil: null,
-      bannedUntil: null,
-    };
-
-    if (nextFailures >= this.config.reputationBanFailures) {
-      next.bannedUntil = now + this.config.banWindowMs;
-      logEvent("warn", "bundler.sender_banned", {
-        sender,
-        failures: nextFailures,
-        bannedUntil: next.bannedUntil,
-      });
-    } else if (nextFailures >= this.config.reputationThrottleFailures) {
-      next.throttledUntil = now + this.config.throttleWindowMs;
-      logEvent("warn", "bundler.sender_throttled", {
-        sender,
-        failures: nextFailures,
-        throttledUntil: next.throttledUntil,
-      });
-    } else {
-      logEvent("warn", "bundler.sender_validation_warning", {
-        sender,
-        failures: nextFailures,
-      });
-    }
-
-    this.senderReputation.set(sender, next);
-    this.saveSenderReputation(sender, next);
-  }
-
-  private buildUserOpHash(userOperation: UserOperation, entryPoint: HexString): string {
-    return buildCanonicalUserOpHash(userOperation, entryPoint, this.config.chainId);
-  }
-
-  private buildDeterministicHash(input: string): string {
-    return `0x${createHash("sha256").update(input).digest("hex")}`;
   }
 
   private findOpenOperationBySenderAndNonce(
@@ -2286,7 +1355,7 @@ if (process.env.NODE_ENV !== "test") {
     process.env.BUNDLER_CHAIN_RPC_URL?.trim() ||
     process.env.TAIKO_RPC_URL?.trim() ||
     process.env.TAIKO_MAINNET_RPC_URL?.trim() ||
-    "https://rpc.mainnet.taiko.xyz";
+    DEFAULT_TAIKO_RPC_URL;
   const service = new BundlerService(
     {
       chainId,

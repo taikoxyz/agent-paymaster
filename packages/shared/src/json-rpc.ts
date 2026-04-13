@@ -27,13 +27,6 @@ export interface JsonRpcFailure {
 
 export type JsonRpcResponse = JsonRpcSuccess | JsonRpcFailure;
 
-export interface DependencyHealth {
-  status: "ok" | "degraded";
-  latencyMs: number;
-  details?: unknown;
-  error?: string;
-}
-
 export const isJsonRpcFailure = (value: JsonRpcResponse): value is JsonRpcFailure =>
   "error" in value;
 
@@ -47,6 +40,15 @@ export const makeJsonRpcError = (
   id,
   error: data === undefined ? { code, message } : { code, message, data },
 });
+
+export const makeJsonRpcResult = <T>(id: JsonRpcId, result: T): JsonRpcSuccess<T> => ({
+  jsonrpc: "2.0",
+  id,
+  result,
+});
+
+export const isJsonRpcId = (value: unknown): value is JsonRpcId =>
+  typeof value === "string" || typeof value === "number" || value === null;
 
 export const isJsonRpcRequest = (value: unknown): value is JsonRpcRequest => {
   if (typeof value !== "object" || value === null) {
@@ -66,3 +68,11 @@ export const isJsonRpcRequest = (value: unknown): value is JsonRpcRequest => {
 
 export const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
+
+export const RPC_PARSE_ERROR = -32700;
+export const RPC_INVALID_REQUEST = -32600;
+export const RPC_METHOD_NOT_FOUND = -32601;
+export const RPC_INVALID_PARAMS = -32602;
+export const RPC_INTERNAL_ERROR = -32603;
+export const RPC_RESOURCE_UNAVAILABLE = -32001;
+export const RPC_RATE_LIMITED = -32005;

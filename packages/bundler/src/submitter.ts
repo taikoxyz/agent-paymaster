@@ -1,17 +1,22 @@
 import { createPublicClient, createWalletClient, http, isAddress, toHex, type Chain } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
+import { hexToBigInt, logEvent, type HexString } from "@agent-paymaster/shared";
+
 import {
   ENTRY_POINT_ABI,
   collectUserOperationExecutions,
   extractBundlerErrorReason,
-  hexToBigInt,
   packUserOperation,
 } from "./entrypoint.js";
-import { logEvent } from "./logger.js";
 
-import type { HexString, UserOperation, UserOperationReceiptLog } from "./index.js";
-import type { BundlerService, ClaimedUserOperation, ClaimedUserOperations } from "./index.js";
+import type {
+  ClaimedUserOperation,
+  ClaimedUserOperations,
+  UserOperation,
+  UserOperationReceiptLog,
+} from "./types.js";
+import type { BundlerService } from "./index.js";
 
 export interface SubmissionClient {
   simulateHandleOps(
@@ -35,7 +40,7 @@ export interface SubmissionReceipt {
   logs: UserOperationReceiptLog[];
 }
 
-export interface BundlerSubmitterConfig {
+interface BundlerSubmitterConfig {
   chainRpcUrl: string;
   privateKey: HexString;
   chain?: Chain;
@@ -131,7 +136,7 @@ const uniqueTransactionCount = (operations: ClaimedUserOperation[]): number =>
     ),
   ).size;
 
-export class ViemSubmissionClient implements SubmissionClient {
+class ViemSubmissionClient implements SubmissionClient {
   private readonly publicClient;
   private readonly walletClient;
   private readonly account;

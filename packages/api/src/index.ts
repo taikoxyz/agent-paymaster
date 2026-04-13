@@ -1,11 +1,28 @@
 import { randomUUID } from "node:crypto";
 
-import { buildHealth } from "@agent-paymaster/shared";
+import {
+  buildHealth,
+  logEvent,
+  RPC_INTERNAL_ERROR,
+  ADDRESS_PATTERN,
+  PRIVATE_KEY_PATTERN,
+  RPC_INVALID_PARAMS,
+  RPC_INVALID_REQUEST,
+  RPC_PARSE_ERROR,
+  RPC_RATE_LIMITED,
+  type JsonRpcFailure,
+  type JsonRpcId,
+  type JsonRpcResponse,
+  isJsonRpcFailure,
+  isJsonRpcRequest,
+  isObject,
+  makeJsonRpcError,
+  parsePositiveIntegerWithFallback,
+} from "@agent-paymaster/shared";
 import { Hono } from "hono";
 
-import { type BundlerClient, HttpBundlerClient } from "./bundler-client.js";
+import { type BundlerClient, type DependencyHealth, HttpBundlerClient } from "./bundler-client.js";
 import { EntryPointMonitor, type DepositHealth } from "./entrypoint-monitor.js";
-import { logEvent } from "./logger.js";
 import { MetricsRegistry } from "./metrics.js";
 import { openApiDocument } from "./openapi.js";
 import { RpcGasPriceOracle } from "./gas-price-oracle.js";
@@ -27,22 +44,7 @@ import {
   type RateLimitResult,
   SenderChurnTracker,
 } from "./rate-limit.js";
-import {
-  type DependencyHealth,
-  type JsonRpcFailure,
-  type JsonRpcId,
-  type JsonRpcResponse,
-  isJsonRpcFailure,
-  isJsonRpcRequest,
-  isObject,
-  makeJsonRpcError,
-} from "./types.js";
 
-const RPC_PARSE_ERROR = -32700;
-const RPC_INVALID_REQUEST = -32600;
-const RPC_INVALID_PARAMS = -32602;
-const RPC_INTERNAL_ERROR = -32603;
-const RPC_RATE_LIMITED = -32005;
 const USER_OPERATION_SUBMISSION_METHODS = new Set(["eth_sendUserOperation"]);
 
 /**
@@ -107,23 +109,12 @@ export interface CreateAppOptions {
 }
 
 const DEFAULT_BUNDLER_RPC_URL = "http://127.0.0.1:3001/rpc";
-const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
-const PRIVATE_KEY_PATTERN = /^0x[a-fA-F0-9]{64}$/u;
 const DEFAULT_PRICE_CACHE_SECONDS = 15;
 const DEFAULT_MAX_DEVIATION_BPS = 75;
 const DEFAULT_ORACLE_HTTP_TIMEOUT_MS = 2_000;
 const DEFAULT_CHAINLINK_ETH_MAX_AGE_SECONDS = 7_200;
 const DEFAULT_CHAINLINK_USDC_MAX_AGE_SECONDS = 86_400;
 const DEFAULT_ETHEREUM_MAINNET_RPC_URL = "https://ethereum-rpc.publicnode.com";
-
-const parseIntWithFallback = (value: string | undefined, fallback: number): number => {
-  if (value === undefined) {
-    return fallback;
-  }
-
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-};
 
 const parseOptionalAddress = (value: string | undefined): string | undefined => {
   if (value === undefined) {
@@ -159,34 +150,36 @@ const resolveConfig = (environment: NodeJS.ProcessEnv = process.env): ApiConfig 
         | `0x${string}`
         | undefined,
       ethUsdMaxAgeMs:
-        parseIntWithFallback(
+        parsePositiveIntegerWithFallback(
           environment.PAYMASTER_CHAINLINK_ETH_USD_MAX_AGE_SECONDS,
           DEFAULT_CHAINLINK_ETH_MAX_AGE_SECONDS,
         ) * 1000,
       usdcUsdMaxAgeMs:
-        parseIntWithFallback(
+        parsePositiveIntegerWithFallback(
           environment.PAYMASTER_CHAINLINK_USDC_USD_MAX_AGE_SECONDS,
           DEFAULT_CHAINLINK_USDC_MAX_AGE_SECONDS,
         ) * 1000,
     }),
     fallbacks: [
       new CoinbaseOracleSource({
-        timeoutMs: parseIntWithFallback(
+        timeoutMs: parsePositiveIntegerWithFallback(
           environment.PAYMASTER_ORACLE_HTTP_TIMEOUT_MS,
           DEFAULT_ORACLE_HTTP_TIMEOUT_MS,
         ),
       }),
       new KrakenOracleSource({
-        timeoutMs: parseIntWithFallback(
+        timeoutMs: parsePositiveIntegerWithFallback(
           environment.PAYMASTER_ORACLE_HTTP_TIMEOUT_MS,
           DEFAULT_ORACLE_HTTP_TIMEOUT_MS,
         ),
       }),
     ],
     cacheTtlMs:
-      parseIntWithFallback(environment.PAYMASTER_PRICE_CACHE_SECONDS, DEFAULT_PRICE_CACHE_SECONDS) *
-      1000,
-    maxPrimaryDeviationBps: parseIntWithFallback(
+      parsePositiveIntegerWithFallback(
+        environment.PAYMASTER_PRICE_CACHE_SECONDS,
+        DEFAULT_PRICE_CACHE_SECONDS,
+      ) * 1000,
+    maxPrimaryDeviationBps: parsePositiveIntegerWithFallback(
       environment.PAYMASTER_ORACLE_MAX_DEVIATION_BPS,
       DEFAULT_MAX_DEVIATION_BPS,
     ),
@@ -200,27 +193,33 @@ const resolveConfig = (environment: NodeJS.ProcessEnv = process.env): ApiConfig 
   return {
     bundlerRpcUrl,
     bundlerHealthUrl: environment.BUNDLER_HEALTH_URL ?? bundlerRpcUrl.replace(/\/rpc$/u, "/health"),
-    requestTimeoutMs: parseIntWithFallback(environment.REQUEST_TIMEOUT_MS, 2_500),
+    requestTimeoutMs: parsePositiveIntegerWithFallback(environment.REQUEST_TIMEOUT_MS, 2_500),
     rateLimit: {
-      windowMs: parseIntWithFallback(environment.RATE_LIMIT_WINDOW_MS, 60_000),
-      maxRequestsPerWindow: parseIntWithFallback(environment.RATE_LIMIT_MAX_REQUESTS, 60),
-      senderMaxRequestsPerWindow: parseIntWithFallback(
+      windowMs: parsePositiveIntegerWithFallback(environment.RATE_LIMIT_WINDOW_MS, 60_000),
+      maxRequestsPerWindow: parsePositiveIntegerWithFallback(
+        environment.RATE_LIMIT_MAX_REQUESTS,
+        60,
+      ),
+      senderMaxRequestsPerWindow: parsePositiveIntegerWithFallback(
         environment.RATE_LIMIT_SENDER_MAX_REQUESTS,
         30,
       ),
-      globalMaxRequestsPerWindow: parseIntWithFallback(
+      globalMaxRequestsPerWindow: parsePositiveIntegerWithFallback(
         environment.RATE_LIMIT_GLOBAL_MAX_REQUESTS,
         600,
       ),
-      expensiveMethodMaxRequestsPerWindow: parseIntWithFallback(
+      expensiveMethodMaxRequestsPerWindow: parsePositiveIntegerWithFallback(
         environment.RATE_LIMIT_EXPENSIVE_METHOD_MAX_REQUESTS,
         20,
       ),
     },
     paymaster: {
       paymasterAddress: parseOptionalAddress(environment.PAYMASTER_ADDRESS),
-      quoteTtlSeconds: parseIntWithFallback(environment.PAYMASTER_QUOTE_TTL_SECONDS, 90),
-      surchargeBps: parseIntWithFallback(environment.PAYMASTER_SURCHARGE_BPS, 500),
+      quoteTtlSeconds: parsePositiveIntegerWithFallback(
+        environment.PAYMASTER_QUOTE_TTL_SECONDS,
+        90,
+      ),
+      surchargeBps: parsePositiveIntegerWithFallback(environment.PAYMASTER_SURCHARGE_BPS, 500),
       quoteSignerPrivateKey: environment.PAYMASTER_QUOTE_SIGNER_PRIVATE_KEY as
         | `0x${string}`
         | undefined,
@@ -515,6 +514,20 @@ const appendMetricBlock = (
   }
 };
 
+const appendReasonDistribution = (
+  lines: string[],
+  name: string,
+  help: string,
+  reasons: Record<string, number>,
+): void => {
+  const samples = Object.entries(reasons)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([reason, value]) => ({ labels: { reason }, value }));
+  if (samples.length > 0) {
+    appendMetricBlock(lines, name, help, "gauge", samples);
+  }
+};
+
 const renderRuntimeMonitoringPrometheus = (snapshot: RuntimeMonitoringSnapshot): string => {
   const lines: string[] = [];
 
@@ -562,17 +575,10 @@ const renderRuntimeMonitoringPrometheus = (snapshot: RuntimeMonitoringSnapshot):
   );
 
   const ageDistributionSamples: PrometheusSample[] = [];
-  for (const [bucket, value] of Object.entries(snapshot.mempoolAgeDistribution.pending).sort()) {
-    ageDistributionSamples.push({
-      labels: { state: "pending", bucket },
-      value,
-    });
-  }
-  for (const [bucket, value] of Object.entries(snapshot.mempoolAgeDistribution.submitting).sort()) {
-    ageDistributionSamples.push({
-      labels: { state: "submitting", bucket },
-      value,
-    });
+  for (const [state, distribution] of Object.entries(snapshot.mempoolAgeDistribution)) {
+    for (const [bucket, value] of Object.entries(distribution).sort()) {
+      ageDistributionSamples.push({ labels: { state, bucket }, value });
+    }
   }
   if (ageDistributionSamples.length > 0) {
     appendMetricBlock(
@@ -620,39 +626,19 @@ const renderRuntimeMonitoringPrometheus = (snapshot: RuntimeMonitoringSnapshot):
     [{ value: snapshot.quoteToSubmissionConversionRate }],
   );
 
-  const simulationFailureSamples: PrometheusSample[] = Object.entries(
+  appendReasonDistribution(
+    lines,
+    "api_userop_simulation_failures_total",
+    "Distribution of simulation and admission-time failure reasons",
     snapshot.simulationFailureReasons,
-  )
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([reason, value]) => ({
-      labels: { reason },
-      value,
-    }));
-  if (simulationFailureSamples.length > 0) {
-    appendMetricBlock(
-      lines,
-      "api_userop_simulation_failures_total",
-      "Distribution of simulation and admission-time failure reasons",
-      "gauge",
-      simulationFailureSamples,
-    );
-  }
+  );
 
-  const revertReasonSamples: PrometheusSample[] = Object.entries(snapshot.revertReasons)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([reason, value]) => ({
-      labels: { reason },
-      value,
-    }));
-  if (revertReasonSamples.length > 0) {
-    appendMetricBlock(
-      lines,
-      "api_userop_revert_reasons_total",
-      "Distribution of on-chain handleOps revert reasons",
-      "gauge",
-      revertReasonSamples,
-    );
-  }
+  appendReasonDistribution(
+    lines,
+    "api_userop_revert_reasons_total",
+    "Distribution of on-chain handleOps revert reasons",
+    snapshot.revertReasons,
+  );
 
   if (lines.length === 0) {
     return "";
@@ -793,11 +779,14 @@ export const createApp = (options: CreateAppOptions = {}): Hono => {
     }
   });
 
-  app.get("/health", async (c) => {
-    const [bundlerHealth, depositHealth] = await Promise.all([
+  const fetchDependencyHealth = () =>
+    Promise.all([
       bundlerClient.health(),
       entryPointMonitor?.checkDeposit() ?? Promise.resolve(undefined),
-    ]);
+    ] as const);
+
+  app.get("/health", async (c) => {
+    const [bundlerHealth, depositHealth] = await fetchDependencyHealth();
 
     const depositDegraded = depositHealth?.status === "critical";
     const status = bundlerHealth.status !== "ok" || depositDegraded ? "degraded" : "ok";
@@ -813,10 +802,7 @@ export const createApp = (options: CreateAppOptions = {}): Hono => {
   });
 
   app.get("/status", async (c) => {
-    const [bundlerHealth, depositHealth] = await Promise.all([
-      bundlerClient.health(),
-      entryPointMonitor?.checkDeposit() ?? Promise.resolve(undefined),
-    ]);
+    const [bundlerHealth, depositHealth] = await fetchDependencyHealth();
 
     const depositDegraded = depositHealth?.status === "critical";
     const status = bundlerHealth.status !== "ok" || depositDegraded ? "degraded" : "ready";
@@ -837,10 +823,7 @@ export const createApp = (options: CreateAppOptions = {}): Hono => {
   app.get("/capabilities", async (c) => c.json(await paymasterService.getCapabilities()));
 
   app.get("/metrics", async (c) => {
-    const [bundlerHealth, depositHealth] = await Promise.all([
-      bundlerClient.health(),
-      entryPointMonitor?.checkDeposit() ?? Promise.resolve(undefined),
-    ]);
+    const [bundlerHealth, depositHealth] = await fetchDependencyHealth();
     const successfulQuotes = metrics.getCounterSum("api_paymaster_quotes_total", {
       result: "ok",
     });

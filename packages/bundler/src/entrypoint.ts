@@ -11,7 +11,8 @@ import {
   toHex,
 } from "viem";
 
-import type { HexString, UserOperation } from "./index.js";
+import { hexToBigInt, UINT128_MAX, type HexString } from "@agent-paymaster/shared";
+import type { UserOperation } from "./types.js";
 
 export interface PackedUserOperation {
   sender: HexString;
@@ -33,7 +34,7 @@ export interface UserOperationExecution {
   revertReason: string | null;
 }
 
-export interface ReceiptLog {
+interface ReceiptLog {
   address: string;
   data: HexString;
   topics: readonly HexString[];
@@ -59,9 +60,6 @@ export const ENTRY_POINT_SIMULATION_ABI = parseAbi([
 
 const ERROR_STRING_SELECTOR = "0x08c379a0";
 const PANIC_SELECTOR = "0x4e487b71";
-const UINT128_MAX = (1n << 128n) - 1n;
-
-export const hexToBigInt = (value: HexString): bigint => (value === "0x" ? 0n : BigInt(value));
 
 const toUint128 = (value: bigint, fieldName: string): bigint => {
   if (value < 0n || value > UINT128_MAX) {
@@ -233,41 +231,7 @@ const decodeSimulationError = (
   }
 };
 
-export const extractSimulationPreOpGas = (error: unknown): bigint | null => {
-  if (error instanceof BaseError) {
-    const reverted = error.walk(
-      (candidate) => candidate instanceof ContractFunctionRevertedError,
-    ) as ContractFunctionRevertedError | null;
-
-    if (!reverted || reverted.data === undefined) {
-      return null;
-    }
-
-    const revertData = reverted.data as unknown;
-
-    if (typeof revertData === "string" && revertData.startsWith("0x")) {
-      return decodeSimulationRevertData(revertData as HexString);
-    }
-
-    if (
-      typeof revertData === "object" &&
-      revertData !== null &&
-      "data" in revertData &&
-      typeof revertData.data === "string" &&
-      revertData.data.startsWith("0x")
-    ) {
-      return decodeSimulationRevertData(revertData.data as HexString);
-    }
-
-    return null;
-  }
-
-  return null;
-};
-
-export const classifySimulationValidation = (
-  error: unknown,
-): { success: true } | { success: false; reason: string } | null => {
+const extractRevertPayload = (error: unknown): HexString | null => {
   if (!(error instanceof BaseError)) {
     return null;
   }
@@ -282,7 +246,7 @@ export const classifySimulationValidation = (
   const revertData = reverted.data as unknown;
 
   if (typeof revertData === "string" && revertData.startsWith("0x")) {
-    return decodeSimulationError(revertData as HexString);
+    return revertData as HexString;
   }
 
   if (
@@ -292,10 +256,22 @@ export const classifySimulationValidation = (
     typeof revertData.data === "string" &&
     revertData.data.startsWith("0x")
   ) {
-    return decodeSimulationError(revertData.data as HexString);
+    return revertData.data as HexString;
   }
 
   return null;
+};
+
+export const extractSimulationPreOpGas = (error: unknown): bigint | null => {
+  const payload = extractRevertPayload(error);
+  return payload !== null ? decodeSimulationRevertData(payload) : null;
+};
+
+export const classifySimulationValidation = (
+  error: unknown,
+): { success: true } | { success: false; reason: string } | null => {
+  const payload = extractRevertPayload(error);
+  return payload !== null ? decodeSimulationError(payload) : null;
 };
 
 export const collectUserOperationExecutions = (

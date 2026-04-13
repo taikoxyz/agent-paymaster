@@ -1,9 +1,11 @@
-import {
-  type DependencyHealth,
-  type JsonRpcRequest,
-  type JsonRpcResponse,
-  isObject,
-} from "./types.js";
+import { type JsonRpcRequest, type JsonRpcResponse, isObject } from "@agent-paymaster/shared";
+
+export interface DependencyHealth {
+  status: "ok" | "degraded";
+  latencyMs: number;
+  details?: unknown;
+  error?: string;
+}
 
 const DEFAULT_TIMEOUT_MS = 2_500;
 const MAX_RETRY_ATTEMPTS = 3;
@@ -63,7 +65,7 @@ export interface BundlerClient {
   health(): Promise<DependencyHealth>;
 }
 
-export interface HttpBundlerClientConfig {
+interface HttpBundlerClientConfig {
   rpcUrl: string;
   healthUrl: string;
   timeoutMs?: number;

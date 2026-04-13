@@ -12,7 +12,7 @@ interface FixedWindowBucket {
   count: number;
 }
 
-export interface FixedWindowRateLimiterConfig {
+interface FixedWindowRateLimiterConfig {
   maxRequestsPerWindow: number;
   windowMs: number;
   maxBuckets: number;
@@ -173,7 +173,7 @@ export const EXPENSIVE_METHODS = new Set([
 // Layered rate limiter — enforces IP + sender + global + method budgets
 // ---------------------------------------------------------------------------
 
-export interface LayeredRateLimitConfig {
+interface LayeredRateLimitConfig {
   /** Per-IP window config. Always checked. */
   ip: { maxRequestsPerWindow: number; windowMs: number };
   /** Per-sender window config. Checked when a valid sender is present. */
@@ -194,13 +194,13 @@ const DEFAULT_LAYERED_CONFIG: LayeredRateLimitConfig = {
   maxBuckets: 10_000,
 };
 
-export type RejectedLayer = "ip" | "sender" | "global" | "method" | null;
+type RejectedLayer = "ip" | "sender" | "global" | "method" | null;
 
-export interface LayeredRateLimitResult extends RateLimitResult {
+interface LayeredRateLimitResult extends RateLimitResult {
   rejectedLayer: RejectedLayer;
 }
 
-export interface LayeredConsumeInput {
+interface LayeredConsumeInput {
   ip: string;
   sender: string | null;
   method: string | null;

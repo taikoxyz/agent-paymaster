@@ -1,6 +1,8 @@
-import type { GasPriceGuidance, GasPriceOracle } from "./paymaster-service.js";
+import { DEFAULT_TAIKO_RPC_URL, bigIntToHex } from "@agent-paymaster/shared";
 
-const DEFAULT_TAIKO_RPC_URL = "https://rpc.mainnet.taiko.xyz";
+import type { GasPriceGuidance, GasPriceOracle } from "./paymaster-service.js";
+import { median } from "./price-provider.js";
+
 const DEFAULT_CACHE_TTL_MS = 10_000;
 const DEFAULT_TIMEOUT_MS = 2_000;
 /**
@@ -72,9 +74,9 @@ export class RpcGasPriceOracle implements GasPriceOracle {
       const suggestedMaxFee = parsed.baseFee * 2n + parsed.medianTip;
 
       const guidance: GasPriceGuidance = {
-        baseFeePerGas: toHex(parsed.baseFee),
-        suggestedMaxFeePerGas: toHex(suggestedMaxFee),
-        suggestedMaxPriorityFeePerGas: toHex(parsed.medianTip),
+        baseFeePerGas: bigIntToHex(parsed.baseFee),
+        suggestedMaxFeePerGas: bigIntToHex(suggestedMaxFee),
+        suggestedMaxPriorityFeePerGas: bigIntToHex(parsed.medianTip),
         fetchedAt: new Date().toISOString(),
       };
 
@@ -153,9 +155,7 @@ export class RpcGasPriceOracle implements GasPriceOracle {
       }
 
       if (tips.length > 0) {
-        tips.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-        const mid = Math.floor(tips.length / 2);
-        const rawMedian = tips.length % 2 === 0 ? (tips[mid - 1] + tips[mid]) / 2n : tips[mid];
+        const rawMedian = median(tips);
         medianTip = rawMedian > MIN_PRIORITY_FEE_WEI ? rawMedian : MIN_PRIORITY_FEE_WEI;
       }
     }
@@ -163,5 +163,3 @@ export class RpcGasPriceOracle implements GasPriceOracle {
     return { baseFee, medianTip };
   }
 }
-
-const toHex = (value: bigint): `0x${string}` => `0x${value.toString(16)}`;

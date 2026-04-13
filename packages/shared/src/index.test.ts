@@ -7,7 +7,6 @@ import {
   normalizePaymasterAndData,
   packPaymasterAndData,
   SERVO_ERC20_PAYMASTER_DATA_NO_SIG_LENGTH,
-  type RpcConfig,
 } from "./index.js";
 
 describe("buildHealth", () => {
@@ -17,15 +16,6 @@ describe("buildHealth", () => {
     expect(result.service).toBe("api");
     expect(result.status).toBe("ok");
     expect(Date.parse(result.timestamp)).not.toBeNaN();
-  });
-
-  it("supports taikoHoodi chain name", () => {
-    const config: RpcConfig = {
-      chain: "taikoHoodi",
-      rpcUrl: "https://rpc.test",
-    };
-
-    expect(config.chain).toBe("taikoHoodi");
   });
 
   it("packs paymasterAndData with the gas prefixes required on-chain", () => {
