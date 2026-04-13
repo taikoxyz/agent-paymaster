@@ -13,7 +13,7 @@ import {
 
 import type { UserOperation, UserOperationReceiptLog } from "./index.js";
 
-export interface BundlerRpcErrorData {
+interface BundlerRpcErrorData {
   method?: string;
   reason?: string;
   [key: string]: unknown;
@@ -33,7 +33,7 @@ export class BundlerRpcError extends Error {
 
 const HEX_PATTERN = /^0x[0-9a-fA-F]*$/;
 
-export const normalizeHex = (value: string): HexString => {
+const normalizeHex = (value: string): HexString => {
   if (!HEX_PATTERN.test(value)) {
     throw new BundlerRpcError(RPC_INVALID_PARAMS, "Expected a hex string", {
       reason: "hex_required",
@@ -62,7 +62,7 @@ export const normalizeAddress = (value: string): HexString => {
   return value.toLowerCase() as HexString;
 };
 
-export const parseHexField = (value: unknown, fieldName: string, optional = false): HexString => {
+const parseHexField = (value: unknown, fieldName: string, optional = false): HexString => {
   if (value === undefined || value === null) {
     if (optional) {
       return "0x";
@@ -84,10 +84,7 @@ export const parseHexField = (value: unknown, fieldName: string, optional = fals
   return normalizeHex(value);
 };
 
-export const parseOptionalHexQuantity = (
-  value: unknown,
-  fieldName: string,
-): HexString | undefined => {
+const parseOptionalHexQuantity = (value: unknown, fieldName: string): HexString | undefined => {
   if (value === undefined) {
     return undefined;
   }
@@ -107,7 +104,7 @@ export const parseHashField = (value: unknown, fieldName: string): HexString => 
   return normalized;
 };
 
-export const parseReceiptLog = (logInput: unknown, index: number): UserOperationReceiptLog => {
+const parseReceiptLog = (logInput: unknown, index: number): UserOperationReceiptLog => {
   if (!isObject(logInput)) {
     throw new BundlerRpcError(RPC_INVALID_PARAMS, `logs[${index}] must be an object`, {
       reason: "submission_log_invalid",
@@ -146,17 +143,17 @@ export const parseReceiptLog = (logInput: unknown, index: number): UserOperation
   };
 };
 
-export interface SendUserOperationParamsInput {
+interface SendUserOperationParamsInput {
   userOperation: unknown;
   entryPoint: unknown;
 }
 
-export interface ParsedSendUserOperationParams {
+interface ParsedSendUserOperationParams {
   userOperation: UserOperation;
   entryPoint: HexString;
 }
 
-export interface BundleSubmission {
+interface BundleSubmission {
   transactionHash: HexString;
   blockNumber: number;
   blockHash: HexString;
@@ -240,7 +237,7 @@ export const parseEntryPoint = (entryPointInput: unknown): HexString => {
   return normalizeAddress(entryPointInput);
 };
 
-export const parseOptionalChainId = (chainIdInput: unknown): number | null => {
+const parseOptionalChainId = (chainIdInput: unknown): number | null => {
   if (chainIdInput === undefined || chainIdInput === null) {
     return null;
   }
@@ -492,7 +489,7 @@ export const getBytesLength = (hexValue: string): bigint => {
  * - Legacy packed format: `initCode` (factory address concatenated with factoryData)
  * - Neither provided: defaults to "0x" (existing account, no deployment)
  */
-export const resolveInitCode = (input: Record<string, unknown>): HexString => {
+const resolveInitCode = (input: Record<string, unknown>): HexString => {
   const hasInitCode = input.initCode !== undefined && input.initCode !== null;
   const hasFactory = input.factory !== undefined && input.factory !== null;
 

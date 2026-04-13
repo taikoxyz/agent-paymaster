@@ -21,7 +21,7 @@ import {
 } from "@agent-paymaster/shared";
 import { Hono } from "hono";
 
-import { type BundlerClient, HttpBundlerClient } from "./bundler-client.js";
+import { type BundlerClient, type DependencyHealth, HttpBundlerClient } from "./bundler-client.js";
 import { EntryPointMonitor, type DepositHealth } from "./entrypoint-monitor.js";
 import { MetricsRegistry } from "./metrics.js";
 import { openApiDocument } from "./openapi.js";
@@ -44,7 +44,6 @@ import {
   type RateLimitResult,
   SenderChurnTracker,
 } from "./rate-limit.js";
-import type { DependencyHealth } from "./bundler-client.js";
 
 const USER_OPERATION_SUBMISSION_METHODS = new Set(["eth_sendUserOperation"]);
 

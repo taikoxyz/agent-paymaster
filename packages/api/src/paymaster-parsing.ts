@@ -25,7 +25,7 @@ const CHAIN_BY_NAME = new Map(
   CHAIN_CONFIGS.map((chain) => [chain.name.toLowerCase(), chain] as const),
 );
 
-export interface GasEstimate {
+interface GasEstimate {
   callGasLimit: bigint;
   verificationGasLimit: bigint;
   preVerificationGas: bigint;
@@ -33,7 +33,7 @@ export interface GasEstimate {
   paymasterPostOpGasLimit: bigint;
 }
 
-export interface ParsedQuoteInput {
+interface ParsedQuoteInput {
   sender: string;
   entryPoint: string;
   chain: ChainConfig;
@@ -54,7 +54,7 @@ export const normalizeAddress = (value: unknown, fieldName: string): string => {
   return value.toLowerCase();
 };
 
-export const parseHexQuantity = (value: unknown, fieldName: string): bigint => {
+const parseHexQuantity = (value: unknown, fieldName: string): bigint => {
   if (typeof value !== "string" || !HEX_QUANTITY_PATTERN.test(value)) {
     throw new Error(`${fieldName} must be a hex quantity`);
   }
@@ -62,7 +62,7 @@ export const parseHexQuantity = (value: unknown, fieldName: string): bigint => {
   return BigInt(value);
 };
 
-export const parseOptionalHexQuantity = (value: unknown, fieldName: string): bigint | null => {
+const parseOptionalHexQuantity = (value: unknown, fieldName: string): bigint | null => {
   if (value === undefined || value === null) {
     return null;
   }
@@ -70,7 +70,7 @@ export const parseOptionalHexQuantity = (value: unknown, fieldName: string): big
   return parseHexQuantity(value, fieldName);
 };
 
-export const parseBytes = (value: unknown, fieldName: string): `0x${string}` => {
+const parseBytes = (value: unknown, fieldName: string): `0x${string}` => {
   if (typeof value !== "string" || !HEX_BYTES_PATTERN.test(value)) {
     throw new Error(`${fieldName} must be a hex bytes value`);
   }
@@ -85,7 +85,7 @@ export const formatUsdcMicros = (microsInput: bigint): string => {
   return `${whole.toString()}.${fraction.toString().padStart(6, "0")}`;
 };
 
-export const resolveChain = (chainInput: unknown, chainIdInput: unknown): ChainConfig => {
+const resolveChain = (chainInput: unknown, chainIdInput: unknown): ChainConfig => {
   if (typeof chainIdInput === "number" && Number.isInteger(chainIdInput)) {
     const byId = CHAIN_BY_ID.get(chainIdInput);
     if (byId !== undefined) {
@@ -188,7 +188,7 @@ export const parseGasEstimate = (
   };
 };
 
-export const resolveInitCodeFromInput = (userOp: Record<string, unknown>): `0x${string}` => {
+const resolveInitCodeFromInput = (userOp: Record<string, unknown>): `0x${string}` => {
   const hasInitCode = userOp.initCode !== undefined && userOp.initCode !== null;
   const hasFactory = userOp.factory !== undefined && userOp.factory !== null;
 
@@ -248,7 +248,7 @@ export const parseQuoteInput = (input: unknown): ParsedQuoteInput => {
   };
 };
 
-export const toUint128Hex = (value: bigint, fieldName: string): `0x${string}` => {
+const toUint128Hex = (value: bigint, fieldName: string): `0x${string}` => {
   if (value < 0n || value > UINT128_MAX) {
     throw new Error(`${fieldName} exceeds uint128`);
   }
