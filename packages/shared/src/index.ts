@@ -1,6 +1,20 @@
 import { encodeAbiParameters, keccak256 } from "viem";
 
 export { logEvent, type LogLevel, type LogFields } from "./logger.js";
+export {
+  type JsonRpcId,
+  type JsonRpcRequest,
+  type JsonRpcErrorObject,
+  type JsonRpcSuccess,
+  type JsonRpcFailure,
+  type JsonRpcResponse,
+  isJsonRpcFailure,
+  makeJsonRpcError,
+  makeJsonRpcResult,
+  isJsonRpcId,
+  isJsonRpcRequest,
+  isObject,
+} from "./json-rpc.js";
 
 export type ChainName = "taikoMainnet" | "taikoHoodi";
 export type HexString = `0x${string}`;

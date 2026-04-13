@@ -1,9 +1,18 @@
 import {
   buildHealth,
+  isJsonRpcId,
+  isObject,
   logEvent,
+  makeJsonRpcError,
+  makeJsonRpcResult,
   normalizePaymasterAndData,
   SERVO_SUPPORTED_ENTRY_POINTS,
   SERVO_TAIKO_ENTRY_POINT_V07,
+  type JsonRpcFailure,
+  type JsonRpcId,
+  type JsonRpcRequest,
+  type JsonRpcResponse,
+  type JsonRpcSuccess,
 } from "@agent-paymaster/shared";
 import { serve } from "@hono/node-server";
 import { createHash } from "node:crypto";
@@ -22,7 +31,6 @@ import { BundlerPersistenceStore } from "./persistence.js";
 import { type BundlerSubmitterHealth, BundlerSubmitter } from "./submitter.js";
 
 export type HexString = `0x${string}`;
-export type JsonRpcId = string | number | null;
 
 const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
 const HEX_PATTERN = /^0x[0-9a-fA-F]*$/;
@@ -129,32 +137,7 @@ export interface ClaimedUserOperations {
   userOperations: ClaimedUserOperation[];
 }
 
-export interface JsonRpcRequest {
-  jsonrpc: "2.0";
-  id: JsonRpcId;
-  method: string;
-  params?: unknown;
-}
-
-interface JsonRpcError {
-  code: number;
-  message: string;
-  data?: unknown;
-}
-
-export interface JsonRpcSuccess<T = unknown> {
-  jsonrpc: "2.0";
-  id: JsonRpcId;
-  result: T;
-}
-
-export interface JsonRpcFailure {
-  jsonrpc: "2.0";
-  id: JsonRpcId;
-  error: JsonRpcError;
-}
-
-export type JsonRpcResponse = JsonRpcSuccess | JsonRpcFailure;
+export type { JsonRpcId, JsonRpcRequest, JsonRpcSuccess, JsonRpcFailure, JsonRpcResponse };
 
 interface SenderReputation {
   failures: number;
@@ -423,12 +406,6 @@ class BundlerRpcError extends Error {
   }
 }
 
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null;
-
-const isJsonRpcId = (value: unknown): value is JsonRpcId =>
-  typeof value === "string" || typeof value === "number" || value === null;
-
 const normalizeHex = (value: string): HexString => {
   if (!HEX_PATTERN.test(value)) {
     throw new BundlerRpcError(RPC_INVALID_PARAMS, "Expected a hex string", {
@@ -537,23 +514,6 @@ const getBytesLength = (hexValue: string): bigint => {
 
   return BigInt(payload.length / 2);
 };
-
-const makeJsonRpcError = (
-  id: JsonRpcId,
-  code: number,
-  message: string,
-  data?: BundlerRpcErrorData,
-): JsonRpcFailure => ({
-  jsonrpc: "2.0",
-  id,
-  error: data ? { code, message, data } : { code, message },
-});
-
-const makeJsonRpcResult = <T>(id: JsonRpcId, result: T): JsonRpcSuccess<T> => ({
-  jsonrpc: "2.0",
-  id,
-  result,
-});
 
 const parseHexField = (value: unknown, fieldName: string, optional = false): HexString => {
   if (value === undefined || value === null) {
