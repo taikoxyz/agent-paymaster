@@ -4,15 +4,24 @@ out = "out"
 libs = ["lib"]
 test = "test"
 script = "script"
-solc = "0.8.24"
+solc = "0.8.26"
 optimizer = true
 optimizer_runs = 200
-evm_version = "cancun"
+evm_version = "shanghai"
 via_ir = true
 remappings = [
     "account-abstraction/=lib/account-abstraction/",
     "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
     "forge-std/=lib/forge-std/src/",
+    # Pimlico upstream singleton-paymaster + its transitive deps. The Pimlico
+    # sources expect these exact import prefixes, so we alias our existing
+    # account-abstraction (v0.7.0) and openzeppelin-contracts submodules and
+    # pin a dedicated v6 account-abstraction checkout and a solady submodule.
+    "pimlico-singleton-paymaster/=lib/pimlico-singleton-paymaster/",
+    "@account-abstraction-v7/=lib/account-abstraction/contracts/",
+    "@account-abstraction-v6/=lib/account-abstraction-v6/contracts/",
+    "@openzeppelin-v5.0.2/contracts/=lib/openzeppelin-contracts/contracts/",
+    "solady/=lib/solady/src/",
 ]
 
 fs_permissions = [{ access = "read-write", path = "/" }]
