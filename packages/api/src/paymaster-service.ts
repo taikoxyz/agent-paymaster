@@ -36,6 +36,7 @@ const QUOTE_ID_LENGTH = 24;
 const BPS_SCALE = 10_000n;
 const DEFAULT_BILLED_PAYMASTER_VALIDATION_GAS_LIMIT = 50_000n;
 const DEFAULT_BILLED_PAYMASTER_POST_OP_GAS = 50_000n;
+const VALID_AFTER_GRACE_SECONDS = 30;
 
 interface PaymasterCapabilityChain {
   name: ChainName;
@@ -360,14 +361,12 @@ export class PaymasterService {
     // Pimlico's SingletonPaymasterV7 has no percentage-surcharge field; Servo bakes its margin into
     // the signed exchangeRate by multiplying the market rate by (1 + surchargeBps/10000). Ceiling
     // division ensures the paymaster never under-collects.
-    const surchargedRate =
+    const exchangeRate =
       (marketRate * (BPS_SCALE + BigInt(this.config.surchargeBps)) + (BPS_SCALE - 1n)) / BPS_SCALE;
-    const exchangeRate = surchargedRate;
 
     const maxTokenCostMicros = (estimatedGasWei * exchangeRate) / WEI_PER_ETH;
     const boundedMaxTokenCostMicros = maxTokenCostMicros > 0n ? maxTokenCostMicros : 1n;
 
-    const VALID_AFTER_GRACE_SECONDS = 30;
     const nowSeconds = Math.floor(this.nowMs() / 1000);
     const validAfterSeconds = nowSeconds - VALID_AFTER_GRACE_SECONDS;
     const validUntilSeconds = nowSeconds + this.config.quoteTtlSeconds;

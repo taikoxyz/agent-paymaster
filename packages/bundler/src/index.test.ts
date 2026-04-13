@@ -460,10 +460,7 @@ describe("BundlerService", () => {
 
   it("defaults to shared supported entry points when none are configured", async () => {
     const defaultService = new BundlerService();
-    const expected = Array.isArray(SERVO_SUPPORTED_ENTRY_POINTS)
-      ? [...SERVO_SUPPORTED_ENTRY_POINTS]
-      : [ENTRY_POINT_V07];
-    expect(defaultService.getSupportedEntryPoints()).toEqual(expected);
+    expect(defaultService.getSupportedEntryPoints()).toEqual([...SERVO_SUPPORTED_ENTRY_POINTS]);
   });
 
   it("estimates gas including taiko l1 data gas contribution", async () => {
