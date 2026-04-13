@@ -26,17 +26,12 @@ import {
 import { serve } from "@hono/node-server";
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
-import { createPublicClient, http, type Chain } from "viem";
+import type { Chain } from "viem";
 import { taiko, taikoHoodi } from "viem/chains";
 
-import {
-  buildCanonicalUserOpHash,
-  ENTRY_POINT_SIMULATION_ABI,
-  classifySimulationValidation,
-  extractSimulationPreOpGas,
-  packUserOperation,
-} from "./entrypoint.js";
+import { buildCanonicalUserOpHash } from "./entrypoint.js";
 import { BundlerPersistenceStore } from "./persistence.js";
+import { ViemAdmissionSimulator, ViemCallGasEstimator, ViemGasSimulator } from "./simulators.js";
 import { type BundlerSubmitterHealth, BundlerSubmitter } from "./submitter.js";
 
 export type { HexString } from "@agent-paymaster/shared";
@@ -592,139 +587,7 @@ const resolveChainById = (chainId: number): Chain | undefined => {
   }
 };
 
-export class ViemGasSimulator implements GasSimulator {
-  private readonly publicClient;
-
-  constructor(rpcUrl: string, chain?: Chain) {
-    this.publicClient = createPublicClient({
-      chain,
-      transport: http(rpcUrl),
-    });
-  }
-
-  async estimatePreOpGas(
-    userOperation: UserOperation,
-    entryPoint: HexString,
-    baseline: UserOperationGasEstimate,
-  ): Promise<bigint> {
-    const simulationUserOperation: UserOperation = {
-      ...userOperation,
-      callGasLimit: baseline.callGasLimit,
-      verificationGasLimit: baseline.verificationGasLimit,
-      preVerificationGas: baseline.preVerificationGas,
-      paymasterVerificationGasLimit: baseline.paymasterVerificationGasLimit,
-      paymasterPostOpGasLimit: baseline.paymasterPostOpGasLimit,
-      paymasterAndData: userOperation.paymasterAndData ?? "0x",
-    };
-
-    try {
-      await this.publicClient.simulateContract({
-        address: entryPoint,
-        abi: ENTRY_POINT_SIMULATION_ABI,
-        functionName: "simulateValidation",
-        args: [packUserOperation(simulationUserOperation)],
-      });
-    } catch (error) {
-      const preOpGas = extractSimulationPreOpGas(error);
-      if (preOpGas !== null) {
-        return preOpGas;
-      }
-
-      throw error;
-    }
-
-    throw new Error("simulateValidation unexpectedly succeeded without revert");
-  }
-}
-
-export class ViemCallGasEstimator implements CallGasEstimator {
-  private readonly publicClient;
-  private readonly bufferPercent: bigint;
-
-  constructor(rpcUrl: string, chain?: Chain, bufferPercent = 15n) {
-    this.publicClient = createPublicClient({
-      chain,
-      transport: http(rpcUrl),
-    });
-    this.bufferPercent = bufferPercent;
-  }
-
-  async estimateCallGas(
-    sender: HexString,
-    callData: HexString,
-    entryPoint: HexString,
-  ): Promise<bigint | null> {
-    // Skip estimation for empty callData (no inner execution)
-    if (callData === "0x" || callData === "0x00") {
-      return null;
-    }
-
-    // Check if sender contract exists (undeployed accounts can't be simulated)
-    const code = await this.publicClient.getCode({ address: sender });
-    if (code === undefined || code === "0x") {
-      return null;
-    }
-
-    try {
-      const estimatedGas = await this.publicClient.estimateGas({
-        account: entryPoint,
-        to: sender,
-        data: callData,
-      });
-
-      // Apply safety buffer for EntryPoint overhead:
-      // - 1/64 gas lost at EntryPoint → account call boundary (EIP-150)
-      // - EntryPoint bookkeeping gas around the call (~3-5K)
-      const buffered = estimatedGas + (estimatedGas * this.bufferPercent) / 100n;
-      return buffered;
-    } catch (error) {
-      logEvent("warn", "bundler.call_gas_estimation_failed", {
-        sender,
-        reason: error instanceof Error ? error.message : "estimation_failed",
-      });
-      return null;
-    }
-  }
-}
-
-export class ViemAdmissionSimulator implements AdmissionSimulator {
-  private readonly publicClient;
-
-  constructor(rpcUrl: string, chain?: Chain) {
-    this.publicClient = createPublicClient({
-      chain,
-      transport: http(rpcUrl),
-    });
-  }
-
-  async simulateValidation(userOperation: UserOperation, entryPoint: HexString): Promise<void> {
-    try {
-      await this.publicClient.simulateContract({
-        address: entryPoint,
-        abi: ENTRY_POINT_SIMULATION_ABI,
-        functionName: "simulateValidation",
-        args: [packUserOperation(userOperation)],
-      });
-    } catch (error) {
-      const classified = classifySimulationValidation(error);
-      if (classified?.success) {
-        return;
-      }
-
-      if (classified && !classified.success) {
-        throw new Error(classified.reason);
-      }
-
-      // v0.7 EntryPoint does not expose simulateValidation on the production
-      // contract (it lives on EntryPointSimulations). When the revert data
-      // cannot be decoded, pass through and let the submitter catch issues
-      // during handleOps simulation.
-      return;
-    }
-
-    throw new Error("simulateValidation unexpectedly succeeded without revert");
-  }
-}
+export { ViemAdmissionSimulator, ViemCallGasEstimator, ViemGasSimulator } from "./simulators.js";
 
 export class BundlerService {
   readonly config: BundlerConfig;
