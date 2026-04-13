@@ -10,6 +10,13 @@ import {
   RPC_INVALID_REQUEST,
   RPC_PARSE_ERROR,
   RPC_RATE_LIMITED,
+  type JsonRpcFailure,
+  type JsonRpcId,
+  type JsonRpcResponse,
+  isJsonRpcFailure,
+  isJsonRpcRequest,
+  isObject,
+  makeJsonRpcError,
 } from "@agent-paymaster/shared";
 import { Hono } from "hono";
 
@@ -36,16 +43,7 @@ import {
   type RateLimitResult,
   SenderChurnTracker,
 } from "./rate-limit.js";
-import {
-  type DependencyHealth,
-  type JsonRpcFailure,
-  type JsonRpcId,
-  type JsonRpcResponse,
-  isJsonRpcFailure,
-  isJsonRpcRequest,
-  isObject,
-  makeJsonRpcError,
-} from "./types.js";
+import type { DependencyHealth } from "./types.js";
 
 const USER_OPERATION_SUBMISSION_METHODS = new Set(["eth_sendUserOperation"]);
 

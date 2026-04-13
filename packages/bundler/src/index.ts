@@ -18,11 +18,9 @@ import {
   SERVO_SUPPORTED_ENTRY_POINTS,
   SERVO_TAIKO_ENTRY_POINT_V07,
   type HexString,
-  type JsonRpcFailure,
   type JsonRpcId,
   type JsonRpcRequest,
   type JsonRpcResponse,
-  type JsonRpcSuccess,
 } from "@agent-paymaster/shared";
 import { serve } from "@hono/node-server";
 import { createHash } from "node:crypto";
@@ -137,8 +135,6 @@ export interface ClaimedUserOperations {
   entryPoint: HexString;
   userOperations: ClaimedUserOperation[];
 }
-
-export type { JsonRpcId, JsonRpcRequest, JsonRpcSuccess, JsonRpcFailure, JsonRpcResponse };
 
 interface SenderReputation {
   failures: number;

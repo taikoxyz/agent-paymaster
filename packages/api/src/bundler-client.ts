@@ -1,9 +1,5 @@
-import {
-  type DependencyHealth,
-  type JsonRpcRequest,
-  type JsonRpcResponse,
-  isObject,
-} from "./types.js";
+import { type JsonRpcRequest, type JsonRpcResponse, isObject } from "@agent-paymaster/shared";
+import type { DependencyHealth } from "./types.js";
 
 const DEFAULT_TIMEOUT_MS = 2_500;
 const MAX_RETRY_ATTEMPTS = 3;

@@ -12,7 +12,8 @@ import type { BundlerClient } from "./bundler-client.js";
 import { createApp } from "./index.js";
 import { StaticPriceProvider } from "./price-provider.js";
 import { FixedWindowRateLimiter, type LayeredRateLimiter } from "./rate-limit.js";
-import type { JsonRpcRequest, JsonRpcResponse, DependencyHealth } from "./types.js";
+import type { JsonRpcRequest, JsonRpcResponse } from "@agent-paymaster/shared";
+import type { DependencyHealth } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Constants

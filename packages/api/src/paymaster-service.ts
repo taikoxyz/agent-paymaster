@@ -11,13 +11,15 @@ import {
   RPC_INVALID_PARAMS,
   SERVO_SUPPORTED_ENTRY_POINTS,
   UINT128_MAX,
+  type JsonRpcRequest,
+  isJsonRpcFailure,
+  isObject,
 } from "@agent-paymaster/shared";
 import { concatHex, toHex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 import type { BundlerClient } from "./bundler-client.js";
 import type { PriceProvider } from "./price-provider.js";
-import { type JsonRpcRequest, isJsonRpcFailure, isObject } from "./types.js";
 
 export type { PriceProvider } from "./price-provider.js";
 
