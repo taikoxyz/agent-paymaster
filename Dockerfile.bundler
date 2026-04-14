@@ -16,13 +16,9 @@ COPY packages/shared packages/shared
 RUN pnpm --filter @agent-paymaster/shared build && pnpm --filter @agent-paymaster/bundler build
 
 FROM base AS runtime
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=deps /app/packages/bundler/node_modules ./packages/bundler/node_modules
+COPY --from=deps /app ./
 COPY --from=build /app/packages/bundler/dist ./packages/bundler/dist
 COPY --from=build /app/packages/shared/dist ./packages/shared/dist
-COPY --from=build /app/packages/bundler/package.json ./packages/bundler/
-COPY --from=build /app/packages/shared/package.json ./packages/shared/
-COPY package.json pnpm-workspace.yaml ./
 RUN mkdir -p /app/data
 EXPOSE 3001
 ENV HEALTHCHECK_URL=http://localhost:3001/health
