@@ -26,3 +26,10 @@ package-lock.json
 # Skill eval workspaces
 skills/*-workspace/
 packages/paymaster-contracts/broadcast/
+
+# Railway (generated at deploy time by CI `cp railway.bundler.json railway.json`)
+railway.json
+
+# Local agent/harness state
+.claude/
+.superset/
