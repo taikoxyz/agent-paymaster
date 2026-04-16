@@ -5,7 +5,7 @@ import Database from "better-sqlite3";
 
 import type { PaymasterQuote } from "./paymaster-service.js";
 
-const DEFAULT_DB_PATH = "./data/servo.db";
+const DEFAULT_DB_PATH = "./data/api.db";
 
 export class PersistenceStore {
   private readonly db: Database.Database;

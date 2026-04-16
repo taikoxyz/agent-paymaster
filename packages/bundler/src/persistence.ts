@@ -7,7 +7,7 @@ import type { HexString } from "@agent-paymaster/shared";
 
 import type { UserOperation, UserOperationReceiptLog } from "./types.js";
 
-const DEFAULT_DB_PATH = "./data/servo.db";
+const DEFAULT_DB_PATH = "./data/bundler.db";
 
 export class BundlerPersistenceStore {
   private readonly db: Database.Database;
