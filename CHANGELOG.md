@@ -10,6 +10,19 @@ Format:
 
 ## [Unreleased]
 
+## [v0.3.1] - 2026-04-16
+
+### Changed
+
+- Split default SQLite database paths: API now uses `./data/api.db` and bundler uses `./data/bundler.db` (previously both used `./data/servo.db`). This enables independent persistent volumes per service on Kubernetes. The `DB_PATH` env var still overrides if set.
+- Dockerfiles now run as non-root `node` user (UID 1000) for GKE security compliance.
+- Release workflow (`release.yml`) deploy step is gated behind `DEPLOY_TARGET != 'gke'` so Railway is not redeployed when migrating to GKE.
+
+### Added
+
+- GKE release workflow (`gke-release.yml`): builds and pushes API and bundler Docker images to Artifact Registry on version tags via Workload Identity Federation.
+- Persistence unit tests for both API and bundler stores.
+
 ## [v0.3.0] - 2026-04-13
 
 ### Added
