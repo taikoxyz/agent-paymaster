@@ -10,6 +10,12 @@ Format:
 
 ## [Unreleased]
 
+## [v0.3.4] - 2026-04-17
+
+### Added
+
+- Syntax highlighting for the landing page code example using shiki (github-dark theme, build-time rendered, zero client JS).
+
 ## [v0.3.3] - 2026-04-17
 
 ### Fixed
