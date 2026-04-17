@@ -93,7 +93,7 @@ await bundlerClient.sendUserOperation({
   ...quote,
 });`;
 
-const RPC_ENDPOINT = "https://api-production-cdfe.up.railway.app/rpc";
+const RPC_ENDPOINT = "https://servo.taiko.xyz/rpc";
 
 const integrationDetails = [
   { label: "Standard", value: "ERC-7677 (pm_getPaymasterData)" },

@@ -38,7 +38,7 @@ export function Footer() {
               Integrate
             </a>
             <a
-              href="https://api-production-cdfe.up.railway.app/health"
+              href="https://servo.taiko.xyz/health"
               target="_blank"
               rel="noopener noreferrer"
               className="text-sm text-surface-500 transition-colors hover:text-surface-700"
