@@ -117,7 +117,7 @@ Contract deployment env vars/scripts:
 - **Package manager**: pnpm 10.32.1 (workspaces)
 - **Tests**: Vitest (TS), Forge (Solidity)
 - **CI**: GitHub Actions — lint, format, build, test (TS + Solidity)
-- **Release**: semver tag push (`vX.Y.Z`) deploys Railway services, runs live smoke tests, then publishes the GitHub Release from `CHANGELOG.md` (web deploy currently commented out)
+- **Release**: semver tag push (`vX.Y.Z`) deploys Railway services (skipped while repo variable `DEPLOY_TARGET` is `gke`; `gke-release.yml` builds images and opens a k8s-configs bump PR instead), runs live smoke tests, then publishes the GitHub Release from `CHANGELOG.md` (web deploy currently commented out)
 
 ## Releases & Deployment
 
@@ -150,7 +150,7 @@ Required GitHub Actions secrets:
 
 - `RAILWAY_API_TOKEN`
 
-GKE path (`taiko-ai-services` GCP project, replaces Railway at cutover): `.github/workflows/gke-release.yml` runs on the same `v*.*.*` tags, pushes `api`, `bundler` and `web` images to `us-central1-docker.pkg.dev/taiko-ai-services/servo/` through GitHub OIDC -> Workload Identity (`servo-image-push`), then opens a PR in `taikoxyz/k8s-configs` bumping `ai-services/servo/values.yaml`. Merging that PR is the deploy (Argo CD). Run `verify-deploy` manually afterwards. Needs repo variables `GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_IMAGE_PUSH_SERVICE_ACCOUNT` and secret `K8S_CONFIGS_TOKEN` (scoped to `taikoxyz/k8s-configs`, Contents + Pull requests write only). The workload identity provider only issues tokens to `gke-release.yml` push runs on `v*` tags, so protect `main` and restrict `v*` tag creation. The cutover steps live in `taiko-infra-mono` `docs/runbooks/servo-cutover.md`; the bundler submitter key stays on Railway until step 11 there (never two active submitters).
+GKE path (`taiko-ai-services` GCP project, replaces Railway at cutover): `.github/workflows/gke-release.yml` runs on the same `v*.*.*` tags, pushes `api`, `bundler` and `web` images to `us-central1-docker.pkg.dev/taiko-ai-services/servo/` through GitHub OIDC -> Workload Identity (`servo-image-push`), then opens a PR in `taikoxyz/k8s-configs` bumping `ai-services/servo/values.yaml`. Merging that PR is the deploy (Argo CD). Run `verify-deploy` manually afterwards. Images are pushed without `latest` (the registry has immutable tags) and the bump PR pins `tag@digest`; an older tag is refused (no downgrade) and one PR (`chore/servo-release`) is updated by newer tags. Needs repo variables `GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_IMAGE_PUSH_SERVICE_ACCOUNT`, and a GitHub environment `servo-release` (required reviewers, deployment tags `v*`) that holds the secret `K8S_CONFIGS_TOKEN` (scoped to `taikoxyz/k8s-configs`, Contents + Pull requests write only). The workload identity provider only issues tokens to `gke-release.yml` push runs on `v*` tags in that environment, so also protect `main` and restrict `v*` tag creation. `verify-deploy` needs the version you just deployed and fails if the live API reports another. The cutover steps live in `taiko-infra-mono` `docs/runbooks/servo-cutover.md`; the bundler submitter key stays on Railway until step 11 there (never two active submitters).
 
 Railway config: `railway.api.json` and `railway.bundler.json` are the in-repo service manifests. The CI workflow copies the appropriate one to `railway.json` before each `railway up` invocation.
 
