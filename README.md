@@ -183,6 +183,8 @@ git push origin main --follow-tags
 
 The workflow validates versions, re-runs CI, deploys the bundler and API to Railway, smoke tests the live API/quote flow, and publishes the GitHub Release. Vercel web deploy is currently commented out pending token refresh.
 
+**GKE migration (in progress):** `.github/workflows/gke-release.yml` builds the images on the same tags and opens a bump PR in `taikoxyz/k8s-configs` (Argo CD deploys); the Railway deploy above is skipped while the repo variable `DEPLOY_TARGET` is `gke`. The endpoint stays on Railway until the cutover (`servo.taiko.xyz` then replaces it); see `docs/deployment.md`.
+
 Release helpers:
 
 ```bash

@@ -8,12 +8,11 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   REGISTRY: us-central1-docker.pkg.dev
-  PROJECT_ID: mainnet-trailblazer
+  PROJECT_ID: taiko-ai-services
   REPOSITORY: servo
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: gke-release-${{ github.ref_name }}
@@ -60,7 +59,7 @@ jobs:
         run: pnpm test
 
       - name: Setup Foundry
-        uses: foundry-rs/foundry-toolchain@v1
+        uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1
 
       - name: Test contracts
         run: pnpm test:contracts
@@ -69,53 +68,172 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # GitHub environment `servo-release` (repo Settings > Environments): required reviewers, deployment tags `v*`.
+    # The Workload Identity provider only issues tokens to jobs that run in it (taiko-infra-mono
+    # terraform/taiko-ai-services/iam/wif.tf), so a tag pushed with an edited workflow still needs a reviewer's approval.
+    environment: servo-release
+    # Only this job authenticates to Google Cloud (OIDC); verify and the cross-repo bump job do not need id-token.
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      api_digest: ${{ steps.api.outputs.digest }}
+      bundler_digest: ${{ steps.bundler.outputs.digest }}
+      web_digest: ${{ steps.web.outputs.digest }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
+      # Keyless: GitHub OIDC -> Workload Identity Federation -> servo-image-push SA
+      # (taiko-infra-mono terraform/taiko-ai-services/iam). That SA can only write the `servo` registry.
+      # Third-party actions are pinned to commit SHAs because this job holds a cloud token.
       - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          service_account: ${{ vars.GCP_IMAGE_PUSH_SERVICE_ACCOUNT }}
 
       - name: Set up Docker buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
 
-      - name: Extract tag
-        id: tag
-        run: echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-
+      # The registry has immutable tags and there is no `latest`: a version is pushed once. A full re-run of this job after
+      # the images exist fails here on purpose; re-run only the failed jobs (the digests below are kept) or cut a new tag.
       - name: Build and push API image
-        uses: docker/build-push-action@v6
+        id: api
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: Dockerfile
           push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/api:${{ steps.tag.outputs.version }}
-            ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/api:latest
+          tags: ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/api:${{ github.ref_name }}
 
       - name: Build and push bundler image
-        uses: docker/build-push-action@v6
+        id: bundler
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: Dockerfile.bundler
           push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/bundler:${{ steps.tag.outputs.version }}
-            ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/bundler:latest
+          tags: ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/bundler:${{ github.ref_name }}
 
       - name: Build and push web image
-        uses: docker/build-push-action@v6
+        id: web
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: Dockerfile.web
           push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/web:${{ steps.tag.outputs.version }}
-            ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/web:latest
+          tags: ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/web:${{ github.ref_name }}
+
+  # Argo CD (taikoxyz/k8s-configs, ai-services/servo) is the deployer. Merging the bump PR is the deploy.
+  # The chart is bumped to `tag@digest`, so what runs is exactly what this workflow built, even if a tag were ever moved.
+  bump-k8s-configs:
+    needs: push-images
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # K8S_CONFIGS_TOKEN is an environment secret of `servo-release`, not a repository secret, so a workflow that does not run
+    # in this (reviewer-gated) environment cannot read it. Scope it to taikoxyz/k8s-configs, Contents + Pull requests write.
+    environment: servo-release
+    permissions:
+      contents: read
+    # Two tags in quick succession must not race on the same file and branch.
+    concurrency:
+      group: bump-servo-k8s-configs
+      cancel-in-progress: false
+
+    steps:
+      # Nothing untrusted may reach a step that has K8S_CONFIGS_TOKEN. The tag is also checked in `verify`; this keeps
+      # the guarantee local to the job that holds the token (the tag goes into sed expressions below).
+      - name: Validate release tag and digests
+        env:
+          TAG: ${{ github.ref_name }}
+          API_DIGEST: ${{ needs.push-images.outputs.api_digest }}
+          BUNDLER_DIGEST: ${{ needs.push-images.outputs.bundler_digest }}
+          WEB_DIGEST: ${{ needs.push-images.outputs.web_digest }}
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::'$TAG' is not a vMAJOR.MINOR.PATCH release tag; refusing to bump."
+            exit 1
+          fi
+          for digest in "$API_DIGEST" "$BUNDLER_DIGEST" "$WEB_DIGEST"; do
+            if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::missing or malformed image digest '$digest'; refusing to bump."
+              exit 1
+            fi
+          done
+
+      - name: Checkout k8s-configs
+        uses: actions/checkout@v6
+        with:
+          repository: taikoxyz/k8s-configs
+          ref: main
+          token: ${{ secrets.K8S_CONFIGS_TOKEN }}
+          persist-credentials: true
+
+      - name: Bump image references and open or update the PR
+        env:
+          TAG: ${{ github.ref_name }}
+          API_DIGEST: ${{ needs.push-images.outputs.api_digest }}
+          BUNDLER_DIGEST: ${{ needs.push-images.outputs.bundler_digest }}
+          WEB_DIGEST: ${{ needs.push-images.outputs.web_digest }}
+          GH_TOKEN: ${{ secrets.K8S_CONFIGS_TOKEN }}
+        run: |
+          set -euo pipefail
+          file="ai-services/servo/values.yaml"
+          # One automation-owned branch (and PR) for all releases: a newer tag updates the open PR instead of opening a competing one.
+          branch="chore/servo-release"
+          prefix="${REGISTRY}/${PROJECT_ID}/${REPOSITORY}"
+
+          # The chart must still have exactly the three image lines this job rewrites; otherwise fail instead of reporting "up to date".
+          lines="$(grep -cE "image: \"${prefix}/(api|bundler|web):" "$file" || true)"
+          if [ "$lines" != "3" ]; then
+            echo "::error::expected 3 servo image lines in ${file}, found ${lines}; the chart layout changed."
+            exit 1
+          fi
+
+          # Never move backwards: a hotfix tag cut after a newer release must be bumped by hand.
+          current="$(grep -oE "${prefix}/api:v[0-9]+\.[0-9]+\.[0-9]+" "$file" | head -n1 | sed -E 's/.*://')"
+          if [ -n "$current" ]; then
+            newest="$(printf '%s\n%s\n' "$current" "$TAG" | sort -V | tail -n1)"
+            if [ "$newest" != "$TAG" ]; then
+              echo "::error::${TAG} is older than the deployed ${current}; refusing to downgrade. Bump ${file} by hand if intended."
+              exit 1
+            fi
+          fi
+
+          sed -E -i "s#(${prefix}/api:)[^\"]+#\1${TAG}@${API_DIGEST}#" "$file"
+          sed -E -i "s#(${prefix}/bundler:)[^\"]+#\1${TAG}@${BUNDLER_DIGEST}#" "$file"
+          sed -E -i "s#(${prefix}/web:)[^\"]+#\1${TAG}@${WEB_DIGEST}#" "$file"
+
+          pinned="$(grep -cE "image: \"${prefix}/(api|bundler|web):${TAG}@sha256:[0-9a-f]{64}\"" "$file" || true)"
+          if [ "$pinned" != "3" ]; then
+            echo "::error::expected 3 images pinned to ${TAG}@sha256 after the bump, found ${pinned}."
+            exit 1
+          fi
+
+          if git diff --quiet -- "$file"; then
+            echo "Servo ${TAG} is already deployed in k8s-configs; nothing to do."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Safe to rerun after a partial failure: the branch is owned by this automation, so a rerun rebuilds it from main.
+          git checkout -B "$branch"
+          git add "$file"
+          git commit -m "chore(ai-services): bump servo to ${TAG}"
+          git push --force origin "HEAD:refs/heads/${branch}"
+
+          title="chore(ai-services): bump servo to ${TAG}"
+          body="Automated bump from taikoxyz/agent-paymaster release ${TAG}; images are pinned by digest. Merging deploys it through Argo CD (sync the servo Application if automated sync is still off). Verify with the verify-deploy workflow in taikoxyz/agent-paymaster."
+          existing="$(gh pr list --repo taikoxyz/k8s-configs --head "$branch" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --repo taikoxyz/k8s-configs --title "$title" --body "$body"
+            echo "Updated open PR #${existing} to ${TAG}."
+            exit 0
+          fi
+          gh pr create --repo taikoxyz/k8s-configs --base main --head "$branch" --title "$title" --body "$body"

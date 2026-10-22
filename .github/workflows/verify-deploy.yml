@@ -1,0 +1,61 @@
+name: verify-deploy
+
+# Argo CD deploys asynchronously, so this is a separate, manual check instead of a release step.
+# Run it after the k8s-configs bump PR is merged and the `servo` Application is synced.
+on:
+  workflow_dispatch:
+    inputs:
+      expected_version:
+        description: "Release you just deployed, e.g. v0.4.0. The check fails if the live API reports a different version (e.g. it still hits Railway)."
+        required: true
+        type: string
+      api_base_url:
+        description: "Public Servo API base URL"
+        required: false
+        default: "https://servo.taiko.xyz"
+        type: string
+      web_url:
+        description: "Public Servo landing page URL"
+        required: false
+        default: "https://servo.taiko.xyz"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          check-latest: true
+
+      - name: Check the live API runs the expected release
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+          API_BASE_URL: ${{ inputs.api_base_url }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$EXPECTED_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::expected_version must look like v1.2.3"
+            exit 1
+          fi
+          live="$(curl --silent --show-error --fail --location "${API_BASE_URL%/}/openapi.json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).info.version)}catch{console.log("unparseable (not this release)")}})')"
+          if [ "v${live}" != "$EXPECTED_VERSION" ]; then
+            echo "::error::${API_BASE_URL} reports version ${live}, expected ${EXPECTED_VERSION#v}."
+            exit 1
+          fi
+          echo "${API_BASE_URL} runs ${live}"
+
+      - name: Smoke test the live deployment
+        env:
+          SMOKE_API_BASE_URL: ${{ inputs.api_base_url }}
+          SMOKE_WEB_URL: ${{ inputs.web_url }}
+        run: node scripts/deployment-smoke.mjs

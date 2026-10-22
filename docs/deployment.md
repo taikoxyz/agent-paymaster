@@ -67,6 +67,13 @@ The submitter's ETH balance gets replenished by EntryPoint reimbursement after e
 | **Web**     | Vercel         | `https://servo.dev` (when Vercel token is valid)    |
 | **SQLite**  | Railway volume | `/app/data/servo.db` (shared between API + Bundler) |
 
+### GKE (migration in progress)
+
+Servo is moving to GKE in the `taiko-ai-services` GCP project (Argo CD, `ai-services/servo` in `taikoxyz/k8s-configs`, Terraform in `taikoxyz/taiko-infra-mono`
+`terraform/taiko-ai-services`). Until the cutover the table above stays true. Releases: `gke-release.yml` (tag push, environment `servo-release` with required
+reviewers) pushes `api`, `bundler` and `web` to Artifact Registry with immutable tags and opens a PR that pins the chart to `tag@digest`; merging it is the deploy.
+Cutover steps, including the single-active-submitter rule and rollback, are in `taiko-infra-mono` `docs/runbooks/servo-cutover.md`.
+
 ### Railway project
 
 - Project ID: `ba002e5e-0684-46e9-8bb4-d3bc2b93fa42`
