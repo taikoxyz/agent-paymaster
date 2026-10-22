@@ -129,6 +129,17 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      # Nothing untrusted may reach a step that has K8S_CONFIGS_TOKEN. The tag is also checked in `verify`; this keeps
+      # the guarantee local to the job that holds the token (the tag goes into sed expressions below).
+      - name: Validate release tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::'$TAG' is not a vMAJOR.MINOR.PATCH release tag; refusing to bump."
+            exit 1
+          fi
+
       - name: Checkout k8s-configs
         uses: actions/checkout@v6
         with:
@@ -155,10 +166,18 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -b "$branch"
+          # Safe to rerun after a partial failure: the branch is owned by this automation, so a rerun rebuilds it from
+          # main and overwrites whatever an earlier run left, and the PR is only created if no open one exists yet.
+          git checkout -B "$branch"
           git add "$file"
           git commit -m "chore(ai-services): bump servo to ${TAG}"
-          git push --force-with-lease origin "$branch"
+          git push --force origin "HEAD:refs/heads/${branch}"
+
+          existing="$(gh pr list --repo taikoxyz/k8s-configs --head "$branch" --state open --json number --jq 'length')"
+          if [ "$existing" != "0" ]; then
+            echo "An open PR for ${branch} already exists; the branch was updated, nothing more to do."
+            exit 0
+          fi
 
           gh pr create \
             --repo taikoxyz/k8s-configs \
