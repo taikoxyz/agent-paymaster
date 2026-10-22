@@ -1,0 +1,39 @@
+name: verify-deploy
+
+# Argo CD deploys asynchronously, so this is a separate, manual check instead of a release step.
+# Run it after the k8s-configs bump PR is merged and the `servo` Application is synced.
+on:
+  workflow_dispatch:
+    inputs:
+      api_base_url:
+        description: "Public Servo API base URL"
+        required: false
+        default: "https://servo.taiko.xyz"
+        type: string
+      web_url:
+        description: "Public Servo landing page URL"
+        required: false
+        default: "https://servo.taiko.xyz"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Smoke test the live deployment
+        env:
+          SMOKE_API_BASE_URL: ${{ inputs.api_base_url }}
+          SMOKE_WEB_URL: ${{ inputs.web_url }}
+        run: node scripts/deployment-smoke.mjs
