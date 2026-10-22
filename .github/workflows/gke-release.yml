@@ -75,7 +75,7 @@ jobs:
         uses: actions/checkout@v6
 
       # Keyless: GitHub OIDC -> Workload Identity Federation -> servo-image-push SA
-      # (taiko-infra-mono terraform/taiko-ai/iam). That SA can only write the `servo` registry.
+      # (taiko-infra-mono terraform/taiko-ai-services/iam). That SA can only write the `servo` registry.
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
